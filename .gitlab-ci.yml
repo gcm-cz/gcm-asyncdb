@@ -3,7 +3,7 @@ stages:
   - release
 
 build-wheel:
-  image: registry.srv.gcm.cz/ci:v1
+  image: registry.srv.gcm.cz/baseimage/python:3.11-ci
   stage: build
   script:
     - /ci/build-wheel.sh
@@ -12,7 +12,7 @@ build-wheel:
       - dist/*
 
 release-wheel:
-  image: registry.srv.gcm.cz/ci:v1
+  image: registry.srv.gcm.cz/baseimage/python:3.11-ci
   stage: release
   dependencies:
     - build-wheel
