@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "gcm-asyncdb"
+version = "1.0.0"
+description = "Better database API with async support."
+authors = ["Michal Kuchta <niximor@gmail.com>"]
+readme = "README.md"
+packages = [
+    { include = "asyncdb" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+aiomysql = "^0.2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

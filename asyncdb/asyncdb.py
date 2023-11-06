@@ -1,0 +1,356 @@
+"""
+Async version of the base classes.
+"""
+import inspect
+from abc import ABC, abstractmethod
+from typing import Union, Type, Optional, Awaitable, AsyncGenerator, Callable, Any, Iterable, TypeVar, List, ParamSpec, \
+    Concatenate, Generic, Dict, MutableSet, MutableSequence, overload
+from warnings import warn
+
+from . import ResultRow, OBJ, DICT, LST, OBJ_OR_FACTORY
+from ._sl import _SL
+from .exceptions import LogicError, EntityNotFound, TooManyRowsError
+from .threadpool import ContextAwareThreadPoolExecutor
+
+_pool = ContextAwareThreadPoolExecutor(10)
+
+T = TypeVar('T')
+P = ParamSpec('P')
+RES_OBJ = TypeVar('RES_OBJ', ResultRow, object)  # pylint: disable=invalid-name
+
+
+class Result(ABC):
+    """
+    Asynchronous result of query
+    """
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    @abstractmethod
+    async def fetch_list(self, cls: Type[LST] = list, *args, **kwargs) -> Optional[LST]:  # type: ignore[override]
+        """
+        Fetch one row from result as list. The list type can be specified as the cls argument.
+        :param cls: List type that should be returned. Defaults to plain list.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs to the cls constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    @abstractmethod
+    async def fetch_dict(self, cls: Type[DICT] = dict[str, Any], *args, **kwargs) -> Optional[DICT]:  # type: ignore[override]
+        """
+        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        :param cls: Dictionary type that should be returned. Defaults to plain dict.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    @abstractmethod
+    async def fetch_object(self, cls: OBJ_OR_FACTORY = ResultRow, *args, **kwargs) -> Optional[OBJ]:  # type: ignore[override]
+        """
+        Fetch one row from result as object of type specified by the cls argument.
+        :param cls: Class (or factory) representing the object that should be returned.
+        :param args: Arguments to the cls constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    @staticmethod
+    async def _fetch_all(method: Callable[[Type[T], Any, Any], Awaitable], cls: Type[T], *args, **kwargs) -> AsyncGenerator[T, None]:  # type: ignore[override]
+        while True:
+            row = await method(cls, *args, **kwargs)
+
+            if row is None:
+                break
+
+            yield row
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    async def fetch_all_object(self, cls: OBJ_OR_FACTORY = ResultRow, *args, **kwargs) -> AsyncGenerator[OBJ, None]:  # type: ignore[override]
+        """
+        Generate objects of type cls for each row of the result set, with optionally passing args and kwargs to the
+        cls constructor.
+        :param cls: See fetch_object for details
+        :param args: See fetch_object for details
+        :param kwargs: See fetch_object for details
+        :return: Generator generating result rows as objects
+        """
+        return self._fetch_all(self.fetch_object, cls, *args, **kwargs)  # type: ignore[arg-type]
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    async def fetch_all_dict(self, cls: Type[DICT] = dict[str, Any], *args, **kwargs) -> AsyncGenerator[DICT, None]:  # type: ignore[override]
+        """
+        Generate dicts of type cls for each row of the result set, with optionally passing args and kwargs to the
+        cls constructor.
+        :param cls: See fetch_dict for details
+        :param args: See fetch_dict for details
+        :param kwargs: See fetch_dict for details
+        :return: Generator generating result rows as dicts
+        """
+        return self._fetch_all(self.fetch_dict, cls, *args, **kwargs)  # type: ignore[arg-type]
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    async def fetch_all_list(self, cls: Type[LST] = list, *args, **kwargs) -> AsyncGenerator[LST, None]:  # type: ignore[override]
+        """
+        Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
+        cls constructor.
+        :param cls: See fetch_list for details
+        :param args: See fetch_list for details
+        :param kwargs: See fetch_list for details
+        :return: Generator generating result rows as lists
+        """
+        return self._fetch_all(self.fetch_list, cls, *args, **kwargs)  # type: ignore[arg-type]
+
+    @overload
+    async def fetch_all_scalar(self, factory: Type[MutableSet]) -> MutableSet[Any]: ...
+
+    @overload
+    async def fetch_all_scalar(self, factory: Type[MutableSequence]) -> MutableSequence[Any]: ...
+
+    async def fetch_all_scalar(self, factory: Type[MutableSet | MutableSequence] = list) -> MutableSet[Any] | \
+                                                                                            MutableSequence[Any]:
+        """
+        Generate list of single column result values.
+        """
+        if not inspect.isclass(factory) or not issubclass(factory, (MutableSet, MutableSequence)):
+            raise AttributeError("Unknown type factory. Can be only MutableSet or MutableSequence.")
+
+        out = factory()
+        append = getattr(out, "append") if issubclass(factory, MutableSequence) else getattr(out, "add")
+
+        async for row in await self.fetch_all_list():
+            append(row[0])
+
+        return out
+
+
+class Transaction(ABC):
+    """
+    Asynchronous transaction
+    """
+    def __enter__(self):
+        """
+        Asynchronous transaction cannot be used in synchronous context.
+        """
+        raise RuntimeError("Cannot use async transaction in sync context. Use async with ...")
+
+    async def __aenter__(self) -> 'Transaction':
+        """
+        Enter asynchronous transaction context.
+        """
+        return self
+
+    async def __aexit__(self, *args):
+        """
+        If transaction is not explicitly committed or rollbacked, it is rollbacked as cleanup strategy.
+        """
+        if not await self.is_committed():
+            warn("Rolling back uncommitted transaction.", RuntimeWarning, stacklevel=_SL.get() + 2)
+            await self.rollback()
+
+        self.connection.current_transaction = None
+
+    # pylint: disable=invalid-overridden-method
+    @abstractmethod
+    async def is_committed(self) -> bool:  # type: ignore[override]
+        """
+        Return True if transaction has been commited.
+        """
+
+    # pylint: disable=invalid-overridden-method
+    @abstractmethod
+    async def last_insert_id(self) -> int:  # type: ignore[override]
+        """
+        Return last used AUTO_INCREMENT value.
+        """
+
+    # pylint: disable=invalid-overridden-method
+    @abstractmethod
+    async def query(self, query: str, *args, **kwargs) -> Union[Result, bool]:  # type: ignore[override]
+        """
+        Execute single query inside the transaction scope.
+        :param query: Query to execute. Can contain %s for each arg from args.
+        :param args: Arguments to the query
+        :param kwargs: Some drivers supports also specifying keyword arguments for the query, but most does not.
+        :return: Result if query returns rows, or True if query succeeded.
+        :raises: QueryError (or subclass of) if there was an error processing the query.
+        """
+
+    # pylint: disable=invalid-overridden-method
+    @abstractmethod
+    async def affected_rows(self) -> int:  # type: ignore[override]
+        """
+        Return number of affected rows by most recent query.
+        """
+
+    # pylint: disable=invalid-overridden-method
+    @abstractmethod
+    async def commit(self) -> None:  # type: ignore[override]
+        """
+        Commit the transaction. After commit, no other operation can be performed on the transaction.
+        :raises: QueryError (or subclass of) if there was an error during commit.
+        """
+
+    # pylint: disable=invalid-overridden-method
+    @abstractmethod
+    async def rollback(self) -> None:  # type: ignore[override]
+        """
+        Rollback the transaction. After rollback, no other operation can be performed on the transaction.
+        :raises: QueryError (or subclass of) if there was an error during rollback.
+        """
+
+    async def _get(self,  # type: ignore[override]
+                   result_fetcher: Callable[[Result], Callable[Concatenate[Type[T] | Callable[..., T], P], Awaitable[Optional[T]]]],
+                   query: str, args: Optional[Iterable[Any]],
+                   cls: Type[T], *cls_args: P.args, **cls_kwargs: P.kwargs) -> T:
+
+        res = await self.query(query, *(args or []))
+        if not isinstance(res, Result):
+            raise LogicError(query, "Query did not return result.")
+
+        row = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
+        if row is None:
+            raise EntityNotFound(query, "Requested entity was not found.")
+
+        another = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
+        if another is not None:
+            raise TooManyRowsError(query, "Query returned more than one row.")
+
+        return row
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    async def get_object(self, query: str, args: Iterable[Any] = None,  # type: ignore[override]
+                         cls: OBJ_OR_FACTORY = ResultRow,
+                         *cls_args, **cls_kwargs) -> OBJ:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard Result.fetch_object.
+        :param query: Query to execute
+        :param args: Arguments to the query
+        :param cls: See Result.fetch_object for details
+        :param cls_args: See Result.fetch_object for details
+        :param cls_kwargs: See Result.fetch_object for details
+        :return: Object retrieved by the query.
+        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: EntityNotFound if query returned a result set, but it was empty.
+        :raises: TooManyRowsError if query returned more than single row.
+        """
+        return await self._get(lambda res: res.fetch_object, query, args, cls, *cls_args, **cls_kwargs)  # type: ignore[arg-type,return-value]
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    async def get_dict(self, query: str, args: Iterable[Any] = None,  # type: ignore[override]
+                       cls: Type[DICT] = dict[str, Any],
+                       *cls_args, **cls_kwargs) -> DICT:
+        """
+        Retrieve single row from the database as dict. The query must return exactly one row, which will be
+        converted to dict using standard Result.fetch_dict.
+        :param query: Query to execute
+        :param args: Arguments to the query
+        :param cls: See Result.fetch_dict for details
+        :param cls_args: See Result.fetch_dict for details
+        :param cls_kwargs: See Result.fetch_dict for details
+        :return: Dict retrieved by the query.
+        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: EntityNotFound if query returned a result set, but it was empty.
+        :raises: TooManyRowsError if query returned more than single row.
+        """
+        return await self._get(lambda res: res.fetch_dict, query, args, cls, *cls_args, **cls_kwargs)  # type: ignore[arg-type,return-value]
+
+    # pylint: disable=keyword-arg-before-vararg, invalid-overridden-method
+    async def get_list(self, query: str, args: Iterable[Any] = None,  # type: ignore[override]
+                       cls: Type[LST] = list,
+                       *cls_args, **cls_kwargs) -> LST:
+        """
+        Retrieve single row from the database as list. The query must return exactly one row, which will be
+        converted to list using standard Result.fetch_list.
+        :param query: Query to execute
+        :param args: Arguments to the query
+        :param cls: See Result.fetch_list for details
+        :param cls_args: See Result.fetch_list for details
+        :param cls_kwargs: See Result.fetch_list for details
+        :return: List retrieved by the query.
+        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: EntityNotFound if query returned a result set, but it was empty.
+        :raises: TooManyRowsError if query returned more than single row.
+        """
+        return await self._get(lambda res: res.fetch_list, query, args, cls, *cls_args, **cls_kwargs)  # type: ignore[arg-type,return-value]
+
+    # pylint: disable=invalid-overridden-method
+    async def get_scalar(self, query: str, args: Iterable[Any] = None) -> Any:
+        """
+        Retrieve single value from the database. The query must return exactly one row and that
+        row must contain exactly one column, which is then returned from this method.
+        :param query: Query to execute
+        :param args: Query arguments.
+        :return: Value of first column of the first row of the result set.
+        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: EntityNotFound if query returned a result set, but it was empty.
+        :raises: TooManyRowsError if query returned more than single row or a row contains more than single column.
+        """
+        row: List[Any] = await self.get_list(query, args)
+        if len(row) != 1:
+            raise TooManyRowsError(query, "Result must contain only one column to be fetched as scalar.")
+
+        return row[0]
+
+    @property
+    @abstractmethod
+    def connection(self) -> object:  # type: ignore[override]
+        """
+        Return connection that this transaction is open on.
+        :return: connection object
+        """
+
+    @abstractmethod
+    async def cleanup(self) -> None:  # type: ignore[override]
+        """
+        Cleanup the connection associated with this transaction and prepare it for usage by next transaction.
+        """
+
+
+TR = TypeVar('TR', bound=Transaction)  # pylint: disable=invalid-name
+
+
+class ObjectFetcher(Generic[RES_OBJ]):
+    """
+    Helper class that acts as generator that fetches objects. The only difference between Result.fetch_all_object is,
+    that this can be type-safe parametrized with actual type of object that it should generate, which helps with
+    code completion and mypy checks.
+    """
+
+    # pylint: disable=too-many-arguments  # Well, it is how it is...
+    def __init__(self, q: Result, cls: Type[ResultRow] | Type[RES_OBJ] | Callable[..., RES_OBJ] = ResultRow,
+                 cls_args: Iterable[Any] = None, cls_kwargs: Dict[str, Any] = None, as_kwargs: bool = True):
+        """
+        Construct the ObjectFetcher.
+        :param q: Query result
+        :param cls: See Result.fetch_object for details.
+        :param cls_args: See Result.fetch_object for details.
+        :param cls_kwargs: See Result.fetch_object for details.
+        :param as_kwargs: See Result.fetch_object for details.
+        """
+        self.q = q
+        self.cls: Union[Type[RES_OBJ], Callable[..., RES_OBJ]] = cls
+        self.cls_args = cls_args or []
+        self.cls_kwargs = cls_kwargs or {}
+        self.as_kwargs = as_kwargs
+
+    def __aiter__(self):
+        """
+        Begining of the iteration.
+        """
+        return self
+
+    async def __anext__(self) -> RES_OBJ:
+        """
+        Return one row from the result set as object of specified type.
+        """
+        resp = await self.q.fetch_object(self.cls, *self.cls_args, as_kwargs=self.as_kwargs, **self.cls_kwargs)  # type: ignore[func-returns-value]
+        if resp is None:
+            raise StopAsyncIteration()
+
+        return resp

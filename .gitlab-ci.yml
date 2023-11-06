@@ -1,0 +1,22 @@
+stages:
+  - build
+  - release
+
+build-wheel:
+  image: registry.srv.gcm.cz/ci:v1
+  stage: build
+  script:
+    - /ci/build-wheel.sh
+  artifacts:
+    paths:
+      - dist/*
+
+release-wheel:
+  image: registry.srv.gcm.cz/ci:v1
+  stage: release
+  dependencies:
+    - build-wheel
+  only:
+    - tags
+  script:
+    - /ci/release-wheel.sh
