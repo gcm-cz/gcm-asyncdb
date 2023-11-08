@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from time import time
 from typing import Any, TYPE_CHECKING, Optional
 
-from lib.asyncdb._sl import _SL
+from .._sl import _SL
 
 if TYPE_CHECKING:
     from .connection import AioMySQLConnection

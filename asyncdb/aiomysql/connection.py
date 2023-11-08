@@ -6,7 +6,7 @@ import aiomysql
 from pymysql.constants import COMMAND
 from pymysql.converters import decoders
 
-from lib.asyncdb._sl import _SL
+from .._sl import _SL
 from .cursor import Cursor
 from .observer import QueryObserver, LoggingObserver, _QueryObserverContext, ObserverContext
 from .. import logger

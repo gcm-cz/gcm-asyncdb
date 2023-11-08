@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Optional, Any
 
 import aiomysql
 
-from lib.asyncdb._sl import _SL
+from .._sl import _SL
 from .error import _query_error_factory
 from .observer import _TransactionQueryObserver, TransactionObserver, ObserverContext
 from .result import Result

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "gcm-asyncdb"
-version = "1.0.0"
+version = "0.0.0"
 description = "Better database API with async support."
 authors = ["Michal Kuchta <niximor@gmail.com>"]
 readme = "README.md"
@@ -11,6 +11,7 @@ packages = [
 [tool.poetry.dependencies]
 python = "^3.11"
 aiomysql = "^0.2.0"
+prometheus-client = "^0.18.0"
 
 [build-system]
 requires = ["poetry-core"]

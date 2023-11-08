@@ -3,7 +3,7 @@ from __future__ import annotations
 import aiomysql
 from typing import TYPE_CHECKING
 
-from lib.asyncdb._sl import _SL
+from .._sl import _SL
 
 if TYPE_CHECKING:
     from .connection import AioMySQLConnection
