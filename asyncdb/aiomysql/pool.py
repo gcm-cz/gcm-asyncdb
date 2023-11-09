@@ -3,7 +3,7 @@ from typing import Optional
 
 import aiomysql
 
-from .config import MySQLConfig
+from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
 from .observer import ObserverContext
 from .transaction import Transaction
@@ -16,7 +16,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
     Connection pool providing aiomysql transactions.
     """
 
-    def __init__(self, config: Optional[MySQLConfig] = None, **kwargs):
+    def __init__(self, config: Optional[MySQLConfigProtocol] = None, **kwargs):
         """
         Initialize the connection pool
         :param config: MySQLConfig with configuration.

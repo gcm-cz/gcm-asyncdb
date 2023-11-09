@@ -3,19 +3,27 @@ Async version of the base classes.
 """
 import inspect
 from abc import ABC, abstractmethod
-from typing import Union, Type, Optional, Awaitable, AsyncGenerator, Callable, Any, Iterable, TypeVar, List, ParamSpec, \
+from typing import Union, Type, Optional, Awaitable, AsyncGenerator, Callable, Any, Iterable, TypeVar, List, \
     Concatenate, Generic, Dict, MutableSet, MutableSequence, overload
 from warnings import warn
 
-from . import ResultRow, OBJ, DICT, LST, OBJ_OR_FACTORY
 from ._sl import _SL
-from .exceptions import LogicError, EntityNotFound, TooManyRowsError
+from .exceptions import LogicError, EntityNotFound, TooManyRowsError, ImplicitRollback
+from .generics import OBJ, DICT, LST, OBJ_OR_FACTORY, T, P
 from .threadpool import ContextAwareThreadPoolExecutor
 
 _pool = ContextAwareThreadPoolExecutor(10)
 
-T = TypeVar('T')
-P = ParamSpec('P')
+
+class ResultRow:
+    """
+    Default class for returning objects from SQL result.
+    """
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
 RES_OBJ = TypeVar('RES_OBJ', ResultRow, object)  # pylint: disable=invalid-name
 
 
@@ -149,7 +157,7 @@ class Transaction(ABC):
         If transaction is not explicitly committed or rollbacked, it is rollbacked as cleanup strategy.
         """
         if not await self.is_committed():
-            warn("Rolling back uncommitted transaction.", RuntimeWarning, stacklevel=_SL.get() + 2)
+            warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get() + 2)
             await self.rollback()
 
         self.connection.current_transaction = None

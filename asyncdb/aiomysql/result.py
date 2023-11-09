@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Any, Optional, Type
 
 import aiomysql
 
-from .. import OBJ, OBJ_OR_FACTORY, ResultRow, DICT, LST, LogicError
-from ..asyncdb import Result as AsyncResultBase
+from ..generics import OBJ, OBJ_OR_FACTORY, DICT, LST
+from ..exceptions import LogicError
+from ..asyncdb import Result as AsyncResultBase, ResultRow
 
 if TYPE_CHECKING:
     from .transaction import Transaction

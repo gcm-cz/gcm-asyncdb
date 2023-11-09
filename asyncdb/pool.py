@@ -124,7 +124,7 @@ class ConnectionPool(Generic[C]):
 
     def __init__(self, connection_class: Type[C], *args,
                  max_pool_size: int = 100, max_spare_conns: int = 10, min_spare_conns: int = 5,
-                 max_conn_lifetime: int = 300, max_conn_usage: int = 100, **kwargs):
+                 max_conn_lifetime: int = 300, max_conn_usage: int = 100, keeper_task: bool = True, **kwargs):
         """
         :param connection_class: Class used to make new connections. When creating connection, args and kwargs are
           passed to the class. Also, you can override create_conn() method to provide initialization logic by yourself.
@@ -138,8 +138,20 @@ class ConnectionPool(Generic[C]):
           replacing it with fresh one.
         :param max_conn_usage: Maximum number of usages each connection can have before terminating and replacing
           it with fresh one.
+        :param keeper_task: Should the keeper task be started automatically?
         :param kwargs: Optional keyword arguments passed to connection constructor.
         """
+        if max_spare_conns > max_pool_size:
+            max_spare_conns = max_pool_size
+
+        if min_spare_conns > max_spare_conns:
+            min_spare_conns = max_spare_conns
+
+        if max_conn_lifetime < 0:
+            raise AttributeError("max_conn_lifetime must be greater or equal to zero")
+
+        if max_conn_usage < 0:
+            raise AttributeError("max_conn_usage must be greater or equal to zero")
 
         self.connection_class = connection_class
         self.log = logger.getChild("pool")
@@ -157,8 +169,10 @@ class ConnectionPool(Generic[C]):
         self.queue = Queue[ConnectionPool.WrappedConnection[C]]()
 
         self.connections_in_use = 0
-        self._keeper_task_done = self.loop.create_task(self.keeper_task())
-        self._keeper_task_done.set_name("connection_pool_keeper")
+
+        self._keeper_task_done = None
+        if keeper_task:
+            self.start_keeper_task()
 
         self.metrics = PoolMetrics()
 
@@ -187,6 +201,13 @@ class ConnectionPool(Generic[C]):
         self.metrics.idle_connections = idle_connections
         self.metrics.used_connections = used_connections
         self.metrics.connection_limit = connection_limit
+
+    def start_keeper_task(self):
+        """
+        Start the keeper task.
+        """
+        self._keeper_task_done = self.loop.create_task(self.keeper_task())
+        self._keeper_task_done.set_name("connection_pool_keeper")
 
     # pylint: disable=unused-argument  # As it is needed for actual implementation in derived classes.
     async def check_conn(self, conn: WrappedConnection[C]) -> bool:
@@ -273,12 +294,13 @@ class ConnectionPool(Generic[C]):
                 self.log.error("Discarding connection %r, because it still contains active transaction %r.", conn, conn.current_transaction)
                 should_return = False
 
-            if self._keeper_task_done.done():
+            if self._keeper_task_done is not None and self._keeper_task_done.done():
+                self.log.debug("Discarding connection %r, because keeper task has finished.")
                 should_return = False
 
             # Check whether the connection can be returned to queue.
-            conn_is_over_usage = self.max_conn_usage is not None and 0 < self.max_conn_usage <= conn.used
-            conn_is_too_old = self.max_conn_lifetime is not None and 0 < self.max_conn_lifetime <= time() - conn.created
+            conn_is_over_usage = self.max_conn_usage and 0 < self.max_conn_usage <= conn.used
+            conn_is_too_old = self.max_conn_lifetime and 0 < self.max_conn_lifetime <= time() - conn.created
 
             if not conn_is_over_usage and not conn_is_too_old and should_return:
                 # Return connection to pool
@@ -300,23 +322,28 @@ class ConnectionPool(Generic[C]):
         else:
             conn.close()
 
-    async def shutdown_keeper_task(self) -> None:  # noqa: D401
+    async def close_connections(self) -> None:
         """
-        Method used to signal the keeper task to stop. It waits until the task is finished.
+        Close all connections in the pool.
         """
-        self._shutdown = True
-        self._keeper_task_done.cancel()
-
-        try:
-            await self._keeper_task_done
-        except CancelledError:
-            pass
-
         while not self.queue.empty():
             try:
                 conn = self.queue.get_nowait()
                 await self.close_conn(conn.conn)
             except QueueEmpty:
+                pass
+
+    async def shutdown_keeper_task(self) -> None:  # noqa: D401
+        """
+        Method used to signal the keeper task to stop. It waits until the task is finished.
+        """
+        self._shutdown = True
+        if self._keeper_task_done is not None:
+            self._keeper_task_done.cancel()
+
+            try:
+                await self._keeper_task_done
+            except CancelledError:
                 pass
 
     async def _check_conns(self) -> None:
@@ -372,6 +399,32 @@ class ConnectionPool(Generic[C]):
         if self.metrics.connection_limit is not None:
             self.metrics.connection_limit.set(self.max_pool_size)
 
+    async def keeper_task_iteration(self) -> None:
+        """
+        One iteration of keeper task.
+        """
+        try:
+            self._update_metrics()
+            await self._check_conns()
+
+            to_purge = min(self.queue.qsize() - self.max_spare_conns, self.queue.qsize() - self.min_spare_conns)
+            to_create = min(self.min_spare_conns - self.queue.qsize(),
+                            self.max_pool_size - self.queue.qsize() - self.connections_in_use)
+
+            if to_purge > 0:
+                await self._purge_conns(to_purge)
+
+            elif to_create > 0:
+                await self._create_conns(to_create)
+
+        # pylint: disable=try-except-raise   # Because we need to propagate CancelledError outside the while
+        # loop, and not catch it by following block.
+        except CancelledError:
+            raise
+
+        except Exception as exc:  # pylint: disable=broad-except
+            self.log.exception(exc)
+
     async def keeper_task(self) -> None:
         """
         Keeper task maintaining lifecycle of the connections. It periodically checks connections for health,
@@ -380,28 +433,7 @@ class ConnectionPool(Generic[C]):
         """
         try:
             while True:
-                try:
-                    self._update_metrics()
-                    await self._check_conns()
-
-                    to_purge = min(self.queue.qsize() - self.max_spare_conns, self.queue.qsize() - self.min_spare_conns)
-                    to_create = min(self.min_spare_conns - self.queue.qsize(),
-                                    self.max_pool_size - self.queue.qsize() - self.connections_in_use)
-
-                    if to_purge > 0:
-                        await self._purge_conns(to_purge)
-
-                    elif to_create > 0:
-                        await self._create_conns(to_create)
-
-                # pylint: disable=try-except-raise   # Because we need to propagate CancelledError outside the while
-                # loop, and not catch it by following block.
-                except CancelledError:
-                    raise
-
-                except Exception as exc:  # pylint: disable=broad-except
-                    self.log.exception(exc)
-
+                await self.keeper_task_iteration()
                 await asyncio.sleep(1.0)
         except CancelledError:
             pass
@@ -426,6 +458,7 @@ class ConnectionPool(Generic[C]):
         """
         self.log.debug("Shutting down pool.")
         await self.shutdown_keeper_task()
+        await self.close_connections()
         self.log.debug("Pool shutdown complete.")
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Optional, Any, Union
 
 import aiomysql
 
@@ -207,7 +207,7 @@ class Transaction(AsyncTransactionBase):
 
         await super().cleanup()
 
-    async def query(self, query: str, *args, **kwargs) -> Union[Result, bool]:  # type: ignore[override]
+    async def query(self, query: str, *args, **kwargs) -> Union[Result, bool]:
         """
         Execute single query inside the transaction scope.
         :param query: Query to execute. Can contain %s for each arg from args.

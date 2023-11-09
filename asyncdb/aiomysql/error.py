@@ -5,7 +5,7 @@ from pymysql import InterfaceError
 from pymysql.constants import ER, CR
 
 from ..exceptions import DuplicateEntry, Deadlock, ParseError, LockWaitTimeout, ServerGone, LostConnection, QueryTooBig, \
-    QueryError
+    QueryError, SyntaxError
 
 
 def _query_error_factory(query: str, exc: Exception, conn: aiomysql.Connection) -> None:

@@ -110,3 +110,9 @@ class QueryTooBig(QueryError):
     Packet too large.
     """
     pass
+
+
+class ImplicitRollback(RuntimeWarning):
+    """
+    Rolling back uncommited transaction.
+    """

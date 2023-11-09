@@ -1,4 +1,25 @@
 from dataclasses import dataclass
+from typing import Protocol
+
+
+class MySQLConfigProtocol(Protocol):
+    """
+    Protocol for
+    """
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
+    charset: str
+    max_pool_size: int
+    max_spare_conns: int
+    min_spare_conns: int
+    max_conn_lifetime: int
+    max_conn_usage: int
+    connect_timeout: int
+    read_timeout: int
+    write_timeout: int
 
 
 @dataclass

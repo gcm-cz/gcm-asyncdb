@@ -12,6 +12,9 @@ from .observer import QueryObserver, LoggingObserver, _QueryObserverContext, Obs
 from .. import logger
 
 
+print("Import")
+
+
 class AioMySQLConnection(aiomysql.Connection):
     def __init__(self, host="localhost", user=None, password="",
                  db=None, port=3306, unix_socket=None,
