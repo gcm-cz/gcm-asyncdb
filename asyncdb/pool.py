@@ -235,7 +235,12 @@ class ConnectionPool(Generic[C]):
                 )
                 conn = await self.queue.get()
             else:
-                conn = await self.make_conn()
+                # Try to create connectiom immediately. If it fails, wait for queue to get anything from keeper.
+                try:
+                    conn = await self.make_conn()
+                except Exception as exc:
+                    self.log.exception(exc, stacklevel=stacklevel + 1)
+                    conn = await self.queue.get()
         else:
             conn = await self.queue.get()
 
