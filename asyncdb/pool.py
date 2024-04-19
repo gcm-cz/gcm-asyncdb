@@ -244,10 +244,10 @@ class ConnectionPool(Generic[C]):
         else:
             conn = await self.queue.get()
 
+        assert conn.current_transaction is None
+
         self.connections_in_use += 1
         conn.used += 1
-
-        assert conn.current_transaction is None
 
         self.log.debug("Reusing existing connection %r.", conn)
         return conn

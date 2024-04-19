@@ -61,6 +61,13 @@ class Transaction(AsyncTransactionBase):
     def detach(self, observer: TransactionObserver):
         self.observers.remove(observer)
 
+    @property
+    def isolation_level(self) -> TransactionIsolationLevel:
+        """
+        Get isolation level of this transaction.
+        """
+        return self._isolation_level
+
     async def _start_transaction(self):
         if self._transaction_initiated:
             raise LogicError("", "Transaction has already been started.")
