@@ -11,7 +11,7 @@ test:
     - poetry run pytest
 
 build-wheel:
-  image: harbor.srv.gcm.cz/baseimage/python:3.11-ci
+  image: harbor.srv.gcm.cz/ci/baseimage/python:3.11-ci
   stage: build
   script:
     - /ci/build-wheel.sh
