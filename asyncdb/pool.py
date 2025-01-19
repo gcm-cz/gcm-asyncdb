@@ -1,78 +1,317 @@
 """
 Connection pool (not only) for databases.
 """
+
 from __future__ import annotations
 
 import asyncio
-from abc import ABC
-from asyncio import Queue, CancelledError, QueueEmpty
+from asyncio import CancelledError, Queue, QueueEmpty, Task
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from time import time
-from typing import Type, TypeVar, Generic, Dict, Tuple, Optional, TYPE_CHECKING, Any, AsyncGenerator
+from types import TracebackType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    ClassVar,
+    Generic,
+    Optional,
+    Self,
+    Type,
+    TypeVar,
+    cast,
+    overload,
+)
+
+import wrapt
 
 from . import logger
 from ._sl import _SL
-from .asyncdb import Transaction
+from .asyncdb import Result, Transaction
+from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow
 
 if TYPE_CHECKING:
     from prometheus_client import Gauge
 
 
-class CountedConnectionMixin(ABC):
+class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
+    # pylint: disable=abstract-method
+
     """
     Helper class that is injected to each connection to be able to track usage of the connection to provide lifecycle
     to the pool.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
         :param args: Arguments passed to the actual connection constructor.
         :param kwargs: Keyword argumens passed to the actual connection constructor.
         """
         super().__init__(*args, **kwargs)
 
-        self.used = 0
-        self.created = time()
-        self.current_transaction = None
+        self.used: int = 0
+        self.created: float = time()
+        self.current_transaction: Optional[Transaction[ConnectionTypeT]] = None
 
-    def close(self):
+    def close(self) -> None | Awaitable[None]:
         """
         Close the connection. This is here to provide predictable interface, as connection class might not
         provide close() method.
         """
         if hasattr(super(), "close"):
-            return getattr(super(), "close")()
+            return super().close()
 
         return None
 
+    def __repr__(self) -> str:
+        """
+        Add used and created fields to the actual connection representation.
+        """
+        return f"{self.__wrapped__!r} used={self.used}, created={datetime.fromtimestamp(self.created)}"  # noqa: DTZ006
 
-class PolledTransactionMixin(ABC):
+
+class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
+    # pylint: disable=abstract-method
+
     """
     Helper class that is injected to each transaction to return transaction to the pool when not used anymore.
     """
 
-    def __init__(self, *args, pool: 'ConnectionPool', **kwargs):
+    def __init__(self, *args: Any, pool: "ConnectionPool[ConnectionTypeT]", **kwargs: Any) -> None:
         """
-        :param args: Arguments to the actual transaction
+        :param connection: Connection for this transaction
         :param pool: Connection pool this transaction has been spinned from
-        :param kwargs: Keyword arguments to the actual transaction.
         """
         super().__init__(*args, **kwargs)
         self.pool = pool
 
-    async def __aexit__(self, *args, **kwargs) -> None:
+    async def __aenter__(self) -> Self:
+        if hasattr(super(), "__aenter__"):
+            await super().__aenter__()
+
+        return self
+
+    async def __aexit__(
+        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
+    ) -> None:
         """
         Return connection to the pool when the transaction's context is left.
-        :param args: Args passed to transaction's __aexit__ (if the is one).
-        :param kwargs: Keyword arguments passed to transaction's __aexit__ (if there is one).
         """
         try:
             if hasattr(super(), "__aexit__"):
                 with _SL():
-                    await getattr(super(), "__aexit__")(*args, **kwargs)
+                    await super().__aexit__(exc_type, exc_val, exc_tb)
+
+            cast(CountedConnection[ConnectionTypeT], self.connection).current_transaction = None
         finally:
-            await self.pool.return_conn(self.connection)   # type: ignore[attr-defined]
+            await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection))
+
+    if TYPE_CHECKING:
+
+        async def is_committed(self) -> bool:
+            # pylint: disable=unnecessary-ellipsis, no-self-use
+            """
+            Return True if transaction is committed.
+            """
+            ...
+
+        async def last_insert_id(self) -> int:
+            # pylint: disable=unnecessary-ellipsis, no-self-use
+            """
+            Return last used AUTO_INCREMENT value.
+            """
+            ...
+
+        async def query(self, query: str, *args: Any, **kwargs: Any) -> Result | bool:
+            # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
+            """
+            Execute single query inside the transaction scope.
+            :param query: Query to execute. Can contain %s for each arg from args.
+            :param args: Arguments to the query
+            :param kwargs: Some drivers supports also specifying keyword arguments for the query, but most does not.
+            :return: Result if query returns rows, or True if query succeeded.
+            :raises: QueryError (or subclass of) if there was an error processing the query.
+            """
+            ...
+
+        async def affected_rows(self) -> int:
+            # pylint: disable=unnecessary-ellipsis, no-self-use
+            """
+            Return number of affected rows by most recent query.
+            """
+            ...
+
+        async def commit(self) -> None:
+            # pylint: disable=unnecessary-ellipsis, no-self-use
+            """
+            Commit the transaction. After commit, no other operation can be performed on the transaction.
+            :raises: QueryError (or subclass of) if there was an error during commit.
+            """
+            ...
+
+        async def rollback(self) -> None:
+            # pylint: disable=unnecessary-ellipsis, no-self-use
+            """
+            Rollback the transaction. After rollback, no other operation can be performed on the transaction.
+            :raises: QueryError (or subclass of) if there was an error during rollback.
+            """
+            ...
+
+        async def _get(
+            self,
+            result_fetcher: Callable[..., Callable[..., Awaitable[Any]]],
+            query: str,
+            args: Optional[Iterable[Any]],
+            cls: Type[T] | Callable[..., T],
+            *cls_args: Any,
+            **cls_kwargs: Any,
+        ) -> T:
+            # pylint: disable=unused-argument, no-self-use
+            ...
+
+        @overload
+        async def get_object(self, query: str, args: Optional[Iterable[Any]] = None, /) -> ResultRow: ...
+
+        @overload
+        async def get_object(
+            self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        ) -> OBJ: ...
+
+        @overload
+        async def get_object(
+            self,
+            query: str,
+            args: Optional[Iterable[Any]] = None,
+            cls: Callable[..., OBJ] = ...,
+            /,
+            *cls_args: Any,
+            **cls_kwargs: Any,
+        ) -> OBJ: ...
+
+        async def get_object(
+            self,
+            query: str,
+            args: Optional[Iterable[Any]] = None,
+            cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow,
+            /,
+            *cls_args: Any,
+            **cls_kwargs: Any,
+        ) -> OBJ | ResultRow:
+            # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
+            """
+            Retrieve single object from the database. The query must return exactly one row, which will be
+            converted to object using standard Result.fetch_object.
+            :param query: Query to execute
+            :param args: Arguments to the query
+            :param cls: See Result.fetch_object for details
+            :param cls_args: See Result.fetch_object for details
+            :param cls_kwargs: See Result.fetch_object for details
+            :return: Object retrieved by the query.
+            :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+            :raises: EntityNotFound if query returned a result set, but it was empty.
+            :raises: TooManyRowsError if query returned more than single row.
+            """
+            ...
+
+        @overload
+        async def get_dict(self, query: str, args: Optional[Iterable[Any]] = None, /) -> dict[str, Any]: ...
+
+        @overload
+        async def get_dict(
+            self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        ) -> DictT: ...
+
+        async def get_dict(
+            self,
+            query: str,
+            args: Optional[Iterable[Any]] = None,
+            cls: Type[DictT | dict[str, Any]] = dict,
+            /,
+            *cls_args: Any,
+            **cls_kwargs: Any,
+        ) -> DictT | dict[str, Any]:
+            # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
+            """
+            Retrieve single row from the database as dict. The query must return exactly one row, which will be
+            converted to dict using standard Result.fetch_dict.
+            :param query: Query to execute
+            :param args: Arguments to the query
+            :param cls: See Result.fetch_dict for details
+            :param cls_args: See Result.fetch_dict for details
+            :param cls_kwargs: See Result.fetch_dict for details
+            :return: Dict retrieved by the query.
+            :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+            :raises: EntityNotFound if query returned a result set, but it was empty.
+            :raises: TooManyRowsError if query returned more than single row.
+            """
+            ...
+
+        @overload
+        async def get_list(self, query: str, args: Optional[Iterable[Any]] = None, /) -> list[Any]: ...
+
+        @overload
+        async def get_list(
+            self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        ) -> ListT: ...
+
+        async def get_list(
+            self,
+            query: str,
+            args: Optional[Iterable[Any]] = None,
+            cls: Type[ListT | list[Any]] = list,
+            /,
+            *cls_args: Any,
+            **cls_kwargs: Any,
+        ) -> ListT | list[Any]:
+            # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
+            """
+            Retrieve single row from the database as list. The query must return exactly one row, which will be
+            converted to list using standard Result.fetch_list.
+            :param query: Query to execute
+            :param args: Arguments to the query
+            :param cls: See Result.fetch_list for details
+            :param cls_args: See Result.fetch_list for details
+            :param cls_kwargs: See Result.fetch_list for details
+            :return: List retrieved by the query.
+            :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+            :raises: EntityNotFound if query returned a result set, but it was empty.
+            :raises: TooManyRowsError if query returned more than single row.
+            """
+            ...
+
+        async def get_scalar(self, query: str, args: Optional[Iterable[Any]] = None) -> Any:
+            # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
+            """
+            Retrieve single value from the database. The query must return exactly one row and that
+            row must contain exactly one column, which is then returned from this method.
+            :param query: Query to execute
+            :param args: Query arguments.
+            :return: Value of first column of the first row of the result set.
+            :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
+            :raises: EntityNotFound if query returned a result set, but it was empty.
+            :raises: TooManyRowsError if query returned more than single row or a row contains more than single column.
+            """
+            ...
+
+        @property
+        def connection(self) -> ConnectionTypeT:
+            # pylint: disable=unnecessary-ellipsis
+            """
+            Return connection that this transaction is open on.
+            :return: connection object
+            """
+            ...
+
+        async def cleanup(self) -> None:
+            # pylint: disable=unnecessary-ellipsis, no-self-use
+            """
+            Cleanup the connection associated with this transaction and prepare it for usage by next transaction.
+            """
+            ...
 
 
 class UnableToCreateConnection(RuntimeError):
@@ -82,49 +321,33 @@ class UnableToCreateConnection(RuntimeError):
     """
 
 
-C = TypeVar('C')
-C2 = TypeVar('C2')  # pylint: disable=invalid-name
-
-
 class PoolMetrics:
+    """
+    Metrics for the connection pool.
+    """
+
     idle_connections: Optional[Gauge] = None
     used_connections: Optional[Gauge] = None
     connection_limit: Optional[Gauge] = None
 
 
-# pylint: disable=too-many-instance-attributes
-class ConnectionPool(Generic[C]):
+class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-instance-attributes
     """
     Generic connection pool for anything.
     """
 
-    class WrappedConnection(CountedConnectionMixin, Generic[C2]):
-        """
-        Wrapper for connection incorporating CountedConnectionMixin to handle lifecycle of the pool.
-        """
-
-        def __init__(self, conn: C2):
-            """
-            :param conn: Actual connection that is being wrapped.
-            """
-            super().__init__()
-            self.conn = conn
-
-        def __getattr__(self, item):
-            """
-            Proxy attribute access to the actual connection.
-            """
-            return getattr(self.conn, item)
-
-        def __repr__(self) -> str:
-            """
-            Add used and created fields to the actual connection representation.
-            """
-            return f"{self.conn!r} used={self.used}, created={datetime.fromtimestamp(self.created)}"
-
-    def __init__(self, connection_class: Type[C], *args,
-                 max_pool_size: int = 100, max_spare_conns: int = 10, min_spare_conns: int = 5,
-                 max_conn_lifetime: int = 300, max_conn_usage: int = 100, keeper_task: bool = True, **kwargs):
+    def __init__(
+        self,
+        connection_class: Type[ConnectionTypeT],
+        *args: Any,
+        max_pool_size: int = 100,
+        max_spare_conns: int = 10,
+        min_spare_conns: int = 5,
+        max_conn_lifetime: int = 300,
+        max_conn_usage: int = 100,
+        keeper_task: bool = True,
+        **kwargs: Any,
+    ) -> None:
         """
         :param connection_class: Class used to make new connections. When creating connection, args and kwargs are
           passed to the class. Also, you can override create_conn() method to provide initialization logic by yourself.
@@ -141,11 +364,8 @@ class ConnectionPool(Generic[C]):
         :param keeper_task: Should the keeper task be started automatically?
         :param kwargs: Optional keyword arguments passed to connection constructor.
         """
-        if max_spare_conns > max_pool_size:
-            max_spare_conns = max_pool_size
-
-        if min_spare_conns > max_spare_conns:
-            min_spare_conns = max_spare_conns
+        max_spare_conns = min(max_spare_conns, max_pool_size)
+        min_spare_conns = min(min_spare_conns, max_spare_conns)
 
         if max_conn_lifetime < 0:
             raise AttributeError("max_conn_lifetime must be greater or equal to zero")
@@ -166,11 +386,11 @@ class ConnectionPool(Generic[C]):
         self.max_conn_lifetime = max_conn_lifetime
         self.max_conn_usage = max_conn_usage
 
-        self.queue = Queue[ConnectionPool.WrappedConnection[C]]()
+        self.queue = Queue[CountedConnection[ConnectionTypeT]]()
 
         self.connections_in_use = 0
 
-        self._keeper_task_done = None
+        self._keeper_task_done: Optional[Task[None]] = None
         if keeper_task:
             self.start_keeper_task()
 
@@ -191,7 +411,13 @@ class ConnectionPool(Generic[C]):
         """
         return "generic-connection-pool"
 
-    def set_metrics(self, *, idle_connections: Gauge = None, used_connections: Gauge = None, connection_limit: Gauge = None) -> None:
+    def set_metrics(
+        self,
+        *,
+        idle_connections: Optional[Gauge] = None,
+        used_connections: Optional[Gauge] = None,
+        connection_limit: Optional[Gauge] = None,
+    ) -> None:
         """
         Set metrics to be observed. Metrics are updated on each worker thread run.
         :param idle_connections: Number of idle connections
@@ -202,15 +428,15 @@ class ConnectionPool(Generic[C]):
         self.metrics.used_connections = used_connections
         self.metrics.connection_limit = connection_limit
 
-    def start_keeper_task(self):
+    def start_keeper_task(self) -> None:
         """
         Start the keeper task.
         """
         self._keeper_task_done = self.loop.create_task(self.keeper_task())
-        self._keeper_task_done.set_name("connection_pool_keeper")
+        if self._keeper_task_done:
+            self._keeper_task_done.set_name("connection_pool_keeper")
 
-    # pylint: disable=unused-argument  # As it is needed for actual implementation in derived classes.
-    async def check_conn(self, conn: WrappedConnection[C]) -> bool:
+    async def check_conn(self, conn: CountedConnection[ConnectionTypeT]) -> bool:  # pylint: disable=unused-argument, no-self-use
         """
         Check connection is healthy and ready to be used.
         :param conn: Connection to be checked.
@@ -218,7 +444,7 @@ class ConnectionPool(Generic[C]):
         """
         return True
 
-    async def get_conn(self, stacklevel: int = 1) -> WrappedConnection[C]:
+    async def get_conn(self, stacklevel: int = 1) -> CountedConnection[ConnectionTypeT]:
         """
         Get connection from connection pool. If there is no connection available at the moment, it waits until
         one is available before returning.
@@ -230,21 +456,29 @@ class ConnectionPool(Generic[C]):
         if self.queue.empty():
             if self.connections_in_use >= self.max_pool_size:
                 self.log.warning(
-                    "Connection pool is empty, unable to retrieve connection immediately.",
-                    stacklevel=stacklevel + 1
+                    "Connection pool is empty, unable to retrieve connection immediately.", stacklevel=stacklevel + 1
                 )
                 conn = await self.queue.get()
             else:
                 # Try to create connectiom immediately. If it fails, wait for queue to get anything from keeper.
                 try:
                     conn = await self.make_conn()
+
+                # pylint: disable=broad-except
                 except Exception as exc:
                     self.log.exception(exc, stacklevel=stacklevel + 1)
                     conn = await self.queue.get()
         else:
             conn = await self.queue.get()
 
-        assert conn.current_transaction is None
+        # Handling of connection returning should check that there is no pending transaction on the connection and if there
+        # is, don't put it back in pool. So this assert is OK, it is really an internal library error if current_transaction
+        # is not None.
+
+        # fmt: off
+        assert conn.current_transaction is None, \
+            "Connection still has transaction outstanding. This is probably bug in library."  # noqa: S101
+        # fmt: on
 
         self.connections_in_use += 1
         conn.used += 1
@@ -252,7 +486,7 @@ class ConnectionPool(Generic[C]):
         self.log.debug("Reusing existing connection %r.", conn)
         return conn
 
-    async def create_conn(self) -> C:
+    async def create_conn(self) -> ConnectionTypeT:
         """
         Create new connection. This by default just calls connection constructor with args and kwargs passed to
         constructor.
@@ -260,7 +494,7 @@ class ConnectionPool(Generic[C]):
         """
         return self.connection_class(*self.args, **self.kwargs)
 
-    async def make_conn(self, use: bool = False) -> WrappedConnection[C]:  # noqa: D401
+    async def make_conn(self, use: bool = False) -> CountedConnection[ConnectionTypeT]:
         """
         Method is called internally by connection pool to create new connection. This in fact just calls create_conn()
         and wraps the connection into WrappedConnection class.
@@ -269,7 +503,7 @@ class ConnectionPool(Generic[C]):
         :raises: UnableToCreateConnection if connection failed to create.
         """
         try:
-            conn = self.WrappedConnection(await self.create_conn())
+            conn: CountedConnection[ConnectionTypeT] = CountedConnection(await self.create_conn())
             if not await self.check_conn(conn):
                 raise UnableToCreateConnection()
         except Exception as exc:
@@ -283,7 +517,7 @@ class ConnectionPool(Generic[C]):
 
         return conn
 
-    async def return_conn(self, conn: WrappedConnection[C]) -> None:
+    async def return_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:
         """
         Return connection to pool, or discard it if its lifetime is exceeded.
         :param conn: Connection to be returned.
@@ -296,7 +530,9 @@ class ConnectionPool(Generic[C]):
                 should_return = False
 
             if conn.current_transaction is not None:
-                self.log.error("Discarding connection %r, because it still contains active transaction %r.", conn, conn.current_transaction)
+                self.log.error(
+                    "Discarding connection %r, because it still contains active transaction %r.", conn, conn.current_transaction
+                )
                 should_return = False
 
             if self._keeper_task_done is not None and self._keeper_task_done.done():
@@ -317,11 +553,12 @@ class ConnectionPool(Generic[C]):
                 elif conn_is_too_old:
                     self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
 
-                await self.close_conn(conn.conn)
+                await self.close_conn(conn)
         finally:
             self.connections_in_use -= 1
 
-    async def close_conn(self, conn: C):
+    async def close_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:  # pylint: disable=no-self-use
+        """Close one connection."""
         if asyncio.iscoroutinefunction(conn.close):
             await conn.close()
         else:
@@ -334,11 +571,11 @@ class ConnectionPool(Generic[C]):
         while not self.queue.empty():
             try:
                 conn = self.queue.get_nowait()
-                await self.close_conn(conn.conn)
+                await self.close_conn(conn)
             except QueueEmpty:
                 pass
 
-    async def shutdown_keeper_task(self) -> None:  # noqa: D401
+    async def shutdown_keeper_task(self) -> None:
         """
         Method used to signal the keeper task to stop. It waits until the task is finished.
         """
@@ -356,7 +593,7 @@ class ConnectionPool(Generic[C]):
             conn = await self.queue.get()
             if time() - conn.created >= self.max_conn_lifetime:
                 self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
-                await self.close_conn(conn.conn)
+                await self.close_conn(conn)
             else:
                 close = False
                 try:
@@ -370,22 +607,22 @@ class ConnectionPool(Generic[C]):
 
                 if close:
                     self.log.info("Closing unhealthy connection %r.", conn)
-                    await self.close_conn(conn.conn)
+                    await self.close_conn(conn)
 
-    async def _purge_conns(self, to_purge: int):
+    async def _purge_conns(self, to_purge: int) -> None:
         self.log.debug("Purging %d inactive connections from pool.", to_purge)
         for _ in range(0, to_purge):
             conn = await self.queue.get()
-            await self.close_conn(conn.conn)
+            await self.close_conn(conn)
 
-    async def _create_conns(self, to_create: int):
+    async def _create_conns(self, to_create: int) -> None:
         self.log.debug("Creating %d spare connections...", to_create)
         for _ in range(0, to_create):
             try:
                 conn = await self.make_conn()
                 await self.queue.put(conn)
-            except UnableToCreateConnection as exc:
-                #self.log.exception(exc)
+            except UnableToCreateConnection:
+                # self.log.exception(exc)
                 pass
 
             except Exception as exc:  # pylint: disable=broad-except
@@ -408,13 +645,16 @@ class ConnectionPool(Generic[C]):
         """
         One iteration of keeper task.
         """
+
+        # pylint: disable=try-except-raise
         try:
             self._update_metrics()
             await self._check_conns()
 
             to_purge = min(self.queue.qsize() - self.max_spare_conns, self.queue.qsize() - self.min_spare_conns)
-            to_create = min(self.min_spare_conns - self.queue.qsize(),
-                            self.max_pool_size - self.queue.qsize() - self.connections_in_use)
+            to_create = min(
+                self.min_spare_conns - self.queue.qsize(), self.max_pool_size - self.queue.qsize() - self.connections_in_use
+            )
 
             if to_purge > 0:
                 await self._purge_conns(to_purge)
@@ -422,8 +662,6 @@ class ConnectionPool(Generic[C]):
             elif to_create > 0:
                 await self._create_conns(to_create)
 
-        # pylint: disable=try-except-raise   # Because we need to propagate CancelledError outside the while
-        # loop, and not catch it by following block.
         except CancelledError:
             raise
 
@@ -467,19 +705,18 @@ class ConnectionPool(Generic[C]):
         self.log.debug("Pool shutdown complete.")
 
 
-# pylint: disable=invalid-name
-TR = TypeVar('TR', bound=Transaction)
+TransactionTypeT = TypeVar("TransactionTypeT", bound=Transaction[Any])
 
 
-class DatabaseConnectionPool(Generic[C, TR], ConnectionPool[C]):
+class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], ConnectionPool[ConnectionTypeT]):
     """
     Connection pool for database connections.
     """
 
-    _pool_cache: Dict[Tuple[str, str], ConnectionPool[C]] = {}
+    _pool_cache: ClassVar[dict[tuple[str, str], DatabaseConnectionPool[Any, Any]]] = {}
 
     @classmethod
-    def create(cls, *args, **kwargs):
+    def create(cls, *args: Any, **kwargs: Any) -> DatabaseConnectionPool[ConnectionTypeT, TransactionTypeT]:
         """
         Create new connection pool.
         :param args: Arguments passed to the connection pool constructor.
@@ -493,38 +730,30 @@ class DatabaseConnectionPool(Generic[C, TR], ConnectionPool[C]):
 
         return cls._pool_cache[key]
 
-    def __init__(self, transaction_class: Type[TR], *args, **kwargs):
+    def __init__(self, transaction_class: Type[TransactionTypeT], *args: Any, **kwargs: Any) -> None:
         """
         :param transaction_class: Class that is returned when transaction is requested.
         :param args: Arguments to the super class constructor.
         :param kwargs: Keyword arguments to the super class constructor.
         """
         super().__init__(*args, **kwargs)
+        self.transaction_class = transaction_class
 
-        class WrappedTransaction(PolledTransactionMixin, transaction_class):  # type: ignore[valid-type,misc]
-            """
-            Class inheriting transaction_class and incorporating PolledTransactionMixin, that is used as
-            actual transaction returned by get_transaction() method.
-            """
-
-        self.transaction_class = WrappedTransaction
-
-    async def get_transaction(self, isolation_level: Optional[Any] = None, stacklevel: int = 1) -> TR:
+    async def get_transaction(self, *, stacklevel: int = 1) -> TransactionTypeT:
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
-        :param isolation_level: Isolation level for the transaction.
         :param stacklevel: Stack level to skip when logging.
         :return: Instance of transaction class.
         """
         conn = await self.get_conn(stacklevel + 1)
-        trans = self.transaction_class(conn, isolation_level, pool=self)
+        trans = PooledTransaction(self.transaction_class(conn), pool=self)
         conn.current_transaction = trans
 
         return trans
 
 
-T = TypeVar('T', bound=ConnectionPool)
+T = TypeVar("T", bound=ConnectionPool[Any])
 
 
 class ConnectionPoolSingleton(Generic[T]):
@@ -532,7 +761,7 @@ class ConnectionPoolSingleton(Generic[T]):
     Just a basic singleton for connection pool.
     """
 
-    def __init__(self, cls: Type[T], *args, **kwargs):
+    def __init__(self, cls: Type[T], *args: Any, **kwargs: Any):
         """
         :param cls: Connection pool class
         :param args: Arguments to the connection pool constructor.
@@ -555,9 +784,11 @@ class ConnectionPoolSingleton(Generic[T]):
 
 
 @asynccontextmanager
-async def transaction(pool: DatabaseConnectionPool, isolation_level: Optional[Any] = None) -> AsyncGenerator[Transaction, None]:
+async def transaction(
+    pool: DatabaseConnectionPool[ConnectionTypeT, Transaction[ConnectionTypeT]],
+) -> AsyncGenerator[Transaction[ConnectionTypeT], None]:
     """
     Return database transaction from the pool as async context.
     """
-    async with await pool.get_transaction(isolation_level) as trans:
+    async with await pool.get_transaction() as trans:
         yield trans

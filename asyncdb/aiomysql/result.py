@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import datetime
-from collections.abc import MutableSequence, MutableSet
 from copy import copy
-from typing import TYPE_CHECKING, Any, Optional, Type
+from typing import TYPE_CHECKING, Any, Optional, Type, overload
 
-import aiomysql
-
-from ..generics import OBJ, OBJ_OR_FACTORY, DICT, LST
+from ..asyncdb import Result as AsyncResultBase
 from ..exceptions import LogicError
-from ..asyncdb import Result as AsyncResultBase, ResultRow
+from ..generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
+from .cursor import Cursor
 
 if TYPE_CHECKING:
     from .transaction import Transaction
@@ -20,7 +18,7 @@ class Result(AsyncResultBase):
     Result of query.
     """
 
-    def __init__(self, transaction: Transaction, cursor: aiomysql.Cursor, query: str):
+    def __init__(self, transaction: Transaction, cursor: Cursor, query: str) -> None:
         self.transaction = transaction
         self.cursor = cursor
         self._closed = False
@@ -42,10 +40,11 @@ class Result(AsyncResultBase):
             while await self.cursor.fetchone():
                 pass
 
+        # pylint: disable=protected-access
         await self.transaction._clean_cursor(self)
         self._closed = True
 
-    async def _fetch_raw(self):
+    async def _fetch_raw(self) -> Optional[Any]:
         row = await self.cursor.fetchone()
         if not row and await self.cursor.nextset():
             row = await self.cursor.fetchone()
@@ -63,8 +62,13 @@ class Result(AsyncResultBase):
 
         return value
 
-    # pylint: disable=keyword-arg-before-vararg
-    async def fetch_list(self, cls: Type[LST] = list, *args, **kwargs) -> Optional[LST]:
+    @overload
+    async def fetch_list(self, /) -> Optional[list[Any]]: ...
+
+    @overload
+    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]: ...
+
+    async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
         """
         Fetch one row from result as list. The list type can be specified as the cls argument.
         :param cls: List type that should be returned. Defaults to plain list.
@@ -82,8 +86,26 @@ class Result(AsyncResultBase):
 
         return result
 
-    # pylint: disable=keyword-arg-before-vararg
-    async def fetch_dict(self, cls: Type[DICT] = dict, *args, **kwargs) -> Optional[DICT]:
+    @overload
+    async def fetch_dict(self, /) -> Optional[dict[str, Any]]:
+        """
+        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        :return: dict containing mapping from column names to values or None if no rows are remaining in the result set.
+        """
+
+    @overload
+    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> Optional[DictT]:
+        """
+        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        :param cls: Dictionary type that should be returned.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    async def fetch_dict(
+        self, cls: Type[DictT | dict[str, Any]] = dict, /, *args: Any, **kwargs: Any
+    ) -> Optional[DictT | dict[str, Any]]:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
         :param cls: Dictionary type that should be returned. Defaults to plain dict.
@@ -101,9 +123,28 @@ class Result(AsyncResultBase):
 
         return result
 
-    # pylint: disable=keyword-arg-before-vararg
-    async def fetch_object(self, cls: OBJ_OR_FACTORY = ResultRow, *args, as_kwargs: bool = True, **kwargs
-                           ) -> Optional[OBJ]:
+    @overload
+    async def fetch_object(self, /) -> Optional[ResultRow]:
+        """
+        Fetch one row from result as object of type ResultRow.
+        :return: Instance of ResultRow created from result row or None if no rows are remaining in the result set.
+        """
+
+    @overload
+    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = True, **kwargs: Any) -> Optional[OBJ]:
+        """
+        Fetch one row from result as object of type specified by the cls argument.
+        :param cls: Class representing the object that should be returned or factory making one.
+        :param args: Arguments to the cls constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    async def fetch_object(
+        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = True, **kwargs: Any
+    ) -> Optional[OBJ | ResultRow]:
         """
         Fetch one row from result as object of type specified by the cls argument.
         :param cls: Class (or factory) representing the object that should be returned.
@@ -131,9 +172,29 @@ class Result(AsyncResultBase):
 
         return result
 
-    async def fetch_all_scalar(self, factory: Type[MutableSet | MutableSequence] = list) -> list[Any]:
+    @overload
+    async def fetch_all_scalar(self) -> list[Any]:
         """
-        Yields values from single-column queries.
+        Fetch all rows from result as a list of scalars. Only for queries returning single column.
+        """
+
+    @overload
+    async def fetch_all_scalar(self, factory: Type[SetT]) -> SetT:  # pylint: disable=arguments-differ
+        """
+        Fetch all rows from result as a list of scalars. Only for queries returning single column.
+        :param factory: Factory to use for the output type.
+        """
+
+    @overload
+    async def fetch_all_scalar(self, factory: Type[ListT]) -> ListT:  # pylint: disable=arguments-differ
+        """
+        Fetch all rows from result as a list of scalars. Only for queries returning single column.
+        :param factory: Factory to use for the output type.
+        """
+
+    async def fetch_all_scalar(self, factory: Type[ListT | SetT | list[Any]] = list) -> ListT | SetT | list[Any]:
+        """
+        Fetch all rows from result as a list of scalars. Only for queries returning single column.
         """
         if len(self.cursor.description) != 1:
             raise LogicError(self._query, "Query returned more than one column.")

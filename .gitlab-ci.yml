@@ -10,6 +10,34 @@ test:
     - poetry install --no-root
     - poetry run pytest
 
+mypy:
+  image: harbor.srv.gcm.cz/baseimage/python:3.11
+  stage: test
+  script:
+    - poetry install --with=dev
+    - poetry run mypy asyncdb
+
+pylint:
+  image: harbor.srv.gcm.cz/baseimage/python:3.11
+  stage: test
+  script:
+    - poetry install --with=dev
+    - poetry run pylint asyncdb
+
+ruff-check:
+  image: harbor.srv.gcm.cz/baseimage/python:3.11
+  stage: test
+  script:
+    - poetry install --with=dev
+    - poetry run ruff check asyncdb
+
+ruff-format:
+  image: harbor.srv.gcm.cz/baseimage/python:3.11
+  stage: test
+  script:
+    - poetry install --with=dev
+    - poetry run ruff format --diff asyncdb
+
 build-wheel:
   image: harbor.srv.gcm.cz/ci/baseimage/python:3.11-ci
   stage: build
@@ -28,3 +56,17 @@ release-wheel:
     - tags
   script:
     - /ci/release-wheel.sh
+
+release-wheel-official:
+  image: harbor.srv.gcm.cz/ci/baseimage/python:3.11-ci
+  stage: release
+  when: manual
+  variables:
+    PYPI_REPO: https://upload.pypi.org/legacy/
+    PYPI_TOKEN: $PYPI_TOKEN_OFFICIAL
+  dependencies:
+      - build-wheel
+  only:
+      - tags
+  script:
+      - /ci/release-wheel.sh

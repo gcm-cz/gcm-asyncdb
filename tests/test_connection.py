@@ -1,15 +1,14 @@
 import warnings
 
-import pytest_asyncio
+from .mock import MockConnectionWrapper  # MUST BE BEFORE asyncdb IMPORTS!!!
+
+import pytest
 from pymysql import ProgrammingError
 from pymysql.constants import ER
 
 from asyncdb import LogicError
-from .mock import reset_mock, MockConnectionWrapper  # MUST BE BEFORE asyncdb IMPORTS!!!
-import pytest
-
 from asyncdb.aiomysql import AioMySQLConnection, Transaction
-from asyncdb.exceptions import SyntaxError, ImplicitRollback
+from asyncdb.exceptions import ImplicitRollback, SyntaxError
 
 
 @pytest.fixture
@@ -22,7 +21,7 @@ async def test_simple_query(connection):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as trx:
             q = await trx.query("SELECT 1")
-            async for row in await q.fetch_all_dict():
+            async for row in q.fetch_all_dict():
                 assert isinstance(row, dict)
                 assert row["1"] == 1
 
@@ -31,10 +30,18 @@ async def test_simple_query(connection):
 
 
 @pytest.mark.asyncio
+async def test_get(connection):
+    async with Transaction(connection) as trx:
+        assert await trx.get_scalar("SELECT 1") == 1
+        assert await trx.get_list("SELECT 1") == [1]
+        assert await trx.get_dict("SELECT 1") == {"1": 1}
+
+
+@pytest.mark.asyncio
 async def test_commit(connection):
     async with Transaction(connection) as trx:
         q = await trx.query("SELECT 1")
-        async for row in await q.fetch_all_list():
+        async for row in q.fetch_all_list():
             assert isinstance(row, list)
             assert row[0] == 1
         await trx.commit()
@@ -60,7 +67,7 @@ async def test_operation_after_commit(connection):
 async def test_errors(connection):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
-            MockConnectionWrapper.QUERIES["SYNTAX ERROR"] = ProgrammingError(ER.SYNTAX_ERROR, "Mocked syntax error")
+            connection.QUERIES["SYNTAX ERROR"] = ProgrammingError(ER.SYNTAX_ERROR, "Mocked syntax error")
 
             q = await transaction.query("SELECT 1")
 

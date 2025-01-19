@@ -1,11 +1,12 @@
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Optional, Protocol
 
 
 class MySQLConfigProtocol(Protocol):
     """
     Protocol for
     """
+
     host: str
     port: int
     user: str
@@ -20,10 +21,11 @@ class MySQLConfigProtocol(Protocol):
     connect_timeout: int
     read_timeout: int
     write_timeout: int
+    remote_app: Optional[str]
 
 
 @dataclass
-class MySQLConfig:
+class MySQLConfig:  # pylint: disable=too-many-instance-attributes
     """
     MySQL connection configuration.
     """
@@ -42,3 +44,4 @@ class MySQLConfig:
     connect_timeout: int = 1
     read_timeout: int = 60
     write_timeout: int = 60
+    remote_app: Optional[str] = None

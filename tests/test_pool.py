@@ -1,11 +1,9 @@
 import asyncio
-import logging
 
-import pytest_asyncio
 import pytest
+import pytest_asyncio
 
-from .mock import reset_mock, MockConnectionWrapper  # MUST BE BEFORE asyncdb IMPORTS!!!
-from asyncdb.aiomysql import MySQLConnectionPool, MySQLConfig
+from asyncdb.aiomysql import MySQLConfig, MySQLConnectionPool
 
 
 @pytest_asyncio.fixture

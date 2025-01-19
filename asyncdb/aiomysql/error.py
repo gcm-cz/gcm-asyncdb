@@ -2,13 +2,26 @@ import asyncio
 
 import aiomysql
 from pymysql import InterfaceError
-from pymysql.constants import ER, CR
+from pymysql.constants import CR, ER
 
-from ..exceptions import DuplicateEntry, Deadlock, ParseError, LockWaitTimeout, ServerGone, LostConnection, QueryTooBig, \
-    QueryError, SyntaxError
+from ..exceptions import (
+    Deadlock,
+    DuplicateEntry,
+    LockWaitTimeout,
+    LostConnection,
+    ParseError,
+    QueryError,
+    QueryTooBig,
+    ServerGone,
+)
+from ..exceptions import (
+    SyntaxError as QuerySyntaxError,
+)
 
 
 def _query_error_factory(query: str, exc: Exception, conn: aiomysql.Connection) -> None:
+    # pylint: disable=protected-access
+
     if isinstance(exc, InterfaceError):
         # This is pretty lousy, but unfortunately aiomysql hides all the errors into aiomysql.Error, so we have no way
         # how to catch task cancellation. Unfortunately not event exc.__cause__ is filled in, so comparing to exception
@@ -21,7 +34,7 @@ def _query_error_factory(query: str, exc: Exception, conn: aiomysql.Connection) 
             ER.DUP_ENTRY: DuplicateEntry,
             ER.LOCK_DEADLOCK: Deadlock,
             ER.PARSE_ERROR: ParseError,
-            ER.SYNTAX_ERROR: SyntaxError,
+            ER.SYNTAX_ERROR: QuerySyntaxError,
             ER.LOCK_WAIT_TIMEOUT: LockWaitTimeout,
             CR.CR_SERVER_GONE_ERROR: ServerGone,
             CR.CR_SERVER_LOST: LostConnection,
@@ -32,7 +45,7 @@ def _query_error_factory(query: str, exc: Exception, conn: aiomysql.Connection) 
             query,
             exc.args[1] if len(exc.args) > 1 else str(exc),
             exc.args[0],
-            remote_app=f"{conn._user}@{conn._host}:{conn._port}/{conn._db}"
+            remote_app=f"{conn._user}@{conn._host}:{conn._port}/{conn._db}",
         )
 
     raise exc

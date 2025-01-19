@@ -1,9 +1,43 @@
-from typing import TypeVar, ParamSpec, Dict, Any, List, Union, Type, Callable
+from typing import Any, Callable, MutableMapping, MutableSequence, MutableSet, Type
 
-T = TypeVar('T')
-P = ParamSpec('P')
-OBJ = TypeVar('OBJ')
-DICT = Dict[str, Any]
-LST = List[Any]
-FETCH = TypeVar('FETCH')
-OBJ_OR_FACTORY = Union[Type[OBJ], Callable[..., OBJ]]  # pylint: disable=invalid-name
+from typing_extensions import TypeVar
+
+T = TypeVar("T")
+
+OBJ = TypeVar("OBJ", bound=object)
+DICT = MutableMapping[str, Any]
+LST = MutableSequence[Any]
+SET = MutableSet[Any]
+FETCH = TypeVar("FETCH")
+OBJ_OR_FACTORY = Type[OBJ] | Callable[..., OBJ]
+
+DictT = TypeVar("DictT", bound=DICT)
+ListT = TypeVar("ListT", bound=LST)
+SetT = TypeVar("SetT", bound=SET)
+
+
+class ResultRow:
+    """
+    Default class for returning objects from SQL result.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.__dict__.update(kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return self.__dict__.get(item)
+
+    def __setattr__(self, item: str, value: Any) -> None:
+        if item in self.__dict__:
+            self.__dict__[item] = value
+
+        else:
+            raise AttributeError(f"Attribute {item!r} not found in {self!r}")
+
+    def __repr__(self) -> str:
+        items = ", ".join([f"{key}={val!r}" for key, val in self.__dict__.items()])
+        return f"<ResultRow {items}>"
+
+
+ResObjT = TypeVar("ResObjT", default=ResultRow, bound=object)
+ConnectionTypeT = TypeVar("ConnectionTypeT")

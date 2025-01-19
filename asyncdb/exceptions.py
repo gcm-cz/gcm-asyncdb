@@ -74,7 +74,7 @@ class ParseError(QueryError):
     """
 
 
-class SyntaxError(QueryError):
+class SyntaxError(QueryError):  # pylint: disable=redefined-builtin  # noqa: A001
     """
     Query syntax error
     """
@@ -102,14 +102,12 @@ class ServerGone(QueryError):
     """
     MySQL server has gone away.
     """
-    pass
 
 
 class QueryTooBig(QueryError):
     """
     Packet too large.
     """
-    pass
 
 
 class ImplicitRollback(RuntimeWarning):

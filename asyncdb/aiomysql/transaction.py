@@ -1,36 +1,50 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Any, Union
-
-import aiomysql
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Optional, Self, Type, cast
 
 from .._sl import _SL
-from .error import _query_error_factory
-from .observer import _TransactionQueryObserver, TransactionObserver, ObserverContext
-from .result import Result
-from .. import LogicError
 from ..asyncdb import Transaction as AsyncTransactionBase
+from ..exceptions import LogicError
+from .cursor import Cursor
+from .error import _query_error_factory
+from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
+from .result import Result
 
 if TYPE_CHECKING:
     from .connection import AioMySQLConnection
 
 
 class TransactionIsolationLevel(str, Enum):
+    """Transaction isolation level. See MySQL documentation for explanation."""
+
     REPEATABLE_READ = "REPEATABLE READ"
     READ_COMMITTED = "READ COMMITTED"
     READ_UNCOMMITTED = "READ UNCOMMITTED"
     SERIALIZABLE = "SERIALIZABLE"
 
 
-class Transaction(AsyncTransactionBase):
+class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disable=too-many-instance-attributes
     """
     Single database transaction.
     """
 
     def __init__(self, connection: AioMySQLConnection, isolation_level: Optional[TransactionIsolationLevel] = None):
-        self._connection: AioMySQLConnection = connection
-        self._cursor: Optional[aiomysql.Cursor] = None
+        """
+        Create new transaction on top of existing AioMySQLConnection.
+
+        This can be used as context manager to provide automatic rollback in case of error (recommended!). But the transaction
+        will work even without context manager. In that case, your code must provide rollback functionality in case of error,
+        otherwise the transaction will stay open.
+
+        :param connection: Connection to use for the transaction. Remember, that only one transaction can be active on the
+          connection at the time.
+        :param isolation_level: Transaction isolation level to use. If None, default isolation level of the database is used.
+        """
+        super().__init__(connection)
+
+        self._cursor: Optional[Cursor] = None
 
         self._isolation_level = isolation_level
         self._transaction_open = True
@@ -40,42 +54,46 @@ class Transaction(AsyncTransactionBase):
         self._cursor_clean = True
 
         self.observers: set[TransactionObserver] = set()
-        self.observer_context: dict[id, Any] = {}
+        self.observer_context: dict[int, Any] = {}
 
         self.connection_observer = _TransactionQueryObserver(self)
         self.connection.attach(self.connection_observer)
 
-    async def __aenter__(self) -> Transaction:
+    async def __aenter__(self) -> Self:
+        """Start the transaction."""
         with _SL(3):
             await self._start_transaction()
 
         return await super().__aenter__()
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
+    ) -> None:
+        """Rollback the transaction if it is still open."""
         with _SL():
             return await super().__aexit__(exc_type, exc_val, exc_tb)
 
-    def attach(self, observer: TransactionObserver):
+    def attach(self, observer: TransactionObserver) -> None:
+        """Attach observer to the transaction."""
         self.observers.add(observer)
 
-    def detach(self, observer: TransactionObserver):
+    def detach(self, observer: TransactionObserver) -> None:
+        """Detach observer from the transaction."""
         self.observers.remove(observer)
 
     @property
-    def isolation_level(self) -> TransactionIsolationLevel:
-        """
-        Get isolation level of this transaction.
-        """
+    def isolation_level(self) -> Optional[TransactionIsolationLevel]:
+        """Get current isolation level of this transaction. If None, default isolation level of the database is used."""
         return self._isolation_level
 
-    async def _start_transaction(self):
+    async def _start_transaction(self) -> None:
         if self._transaction_initiated:
             raise LogicError("", "Transaction has already been started.")
 
         self._transaction_initiated = True
 
         if self._isolation_level is not None:
-            await self._connection.query("SET TRANSACTION ISOLATION LEVEL {}".format(self._isolation_level.value))
+            await self._connection.query(f"SET TRANSACTION ISOLATION LEVEL {self._isolation_level.value}")
 
         with _SL():
             with ObserverContext() as ctx:
@@ -83,24 +101,28 @@ class Transaction(AsyncTransactionBase):
                     await self._connection.begin()
 
                     for observer in self.observers:
-                        self.observer_context[id(observer)] = observer.observe_transaction_start(
-                            self, **ctx.kwargs()
-                        )
+                        self.observer_context[id(observer)] = observer.observe_transaction_start(self, **ctx.kwargs())
+
+                # pylint: disable=broad-exception-caught
                 except Exception as exc:
                     _query_error_factory("BEGIN", exc, self._connection)
 
-    async def is_committed(self) -> bool:  # type: ignore[override]
+    async def is_committed(self) -> bool:
+        """Check if the transaction is committed."""
         return not self._transaction_open
 
-    async def last_insert_id(self) -> int:  # type: ignore[override]
+    async def last_insert_id(self) -> int:
+        """Get last inserted ID for autoincrement column."""
         await self._check_transaction_open("")
-        return (await self.cursor).lastrowid
+        return cast(int, (await self.cursor).lastrowid)
 
-    async def affected_rows(self) -> int:  # type: ignore[override]
+    async def affected_rows(self) -> int:
+        """Get number of affected rows by the last query."""
         await self._check_transaction_open("")
         return (await self.cursor).rowcount
 
-    async def commit(self) -> None:  # type: ignore[override]
+    async def commit(self) -> None:
+        """Commit transaction"""
         with _SL(2):
             with ObserverContext() as ctx:
                 await self._check_transaction_open("COMMIT")
@@ -110,26 +132,22 @@ class Transaction(AsyncTransactionBase):
                     await self._connection.commit()
 
                     for observer in self.observers:
-                        observer.observe_transaction_commit(
-                            self,
-                            self.observer_context.get(id(observer)),
-                            **ctx.kwargs()
-                        )
+                        observer.observe_transaction_commit(self, self.observer_context.get(id(observer)), **ctx.kwargs())
+
+                # pylint: disable=broad-exception-caught
                 except Exception as exc:
                     _query_error_factory("COMMIT", exc, self.connection)
+
                 finally:
                     self._transaction_open = False
 
                     self.connection.detach(self.connection_observer)
 
                     for observer in self.observers:
-                        observer.observe_transaction_end(
-                            self,
-                            self.observer_context.get(id(observer)),
-                            **ctx.kwargs()
-                        )
+                        observer.observe_transaction_end(self, self.observer_context.get(id(observer)), **ctx.kwargs())
 
-    async def rollback(self) -> None:  # type: ignore[override]
+    async def rollback(self) -> None:
+        """Rollback transaction"""
         with _SL(2):
             with ObserverContext() as ctx:
                 await self._check_transaction_open("ROLLBACK")
@@ -139,11 +157,9 @@ class Transaction(AsyncTransactionBase):
                     await self._connection.rollback()
 
                     for observer in self.observers:
-                        observer.observe_transaction_rollback(
-                            self,
-                            self.observer_context.get(id(observer)),
-                            **ctx.kwargs()
-                        )
+                        observer.observe_transaction_rollback(self, self.observer_context.get(id(observer)), **ctx.kwargs())
+
+                # pylint: disable=broad-exception-caught
                 except Exception as exc:
                     _query_error_factory("ROLLBACK", exc, self.connection)
 
@@ -151,24 +167,21 @@ class Transaction(AsyncTransactionBase):
                     self.connection.detach(self.connection_observer)
 
                     for observer in self.observers:
-                        observer.observe_transaction_end(
-                            self,
-                            self.observer_context.get(id(observer)),
-                            **ctx.kwargs()
-                        )
+                        observer.observe_transaction_end(self, self.observer_context.get(id(observer)), **ctx.kwargs())
 
                     self._transaction_open = False
 
-    async def _check_transaction_open(self, query: str):
+    async def _check_transaction_open(self, query: str) -> None:
+        """Raise an error when transaction has already been commited."""
         if not self._transaction_initiated:
             await self._start_transaction()
 
         if await self.is_committed():
             raise LogicError(query, "Cannot perform operation on committed transaction.")
 
-    async def _clean_cursor(self, result: Result):
+    async def _clean_cursor(self, result: Result) -> None:
         if self._last_result != result:
-            raise LogicError("", f"Commands out of sync: Trying to close different result than last executed.")
+            raise LogicError("", "Commands out of sync: Trying to close different result than last executed.")
 
         self._last_result = None
 
@@ -180,24 +193,23 @@ class Transaction(AsyncTransactionBase):
 
     @property
     def connection(self) -> AioMySQLConnection:
-        """
-        Return connection associated with this transaction.
-        """
+        """Return connection associated with this transaction."""
         return self._connection
 
     @property
-    async def cursor(self) -> aiomysql.Cursor:
+    async def cursor(self) -> Cursor:
         """
         Get cursor for executing queries. Should not be needed, one should use query() method instead.
         """
         if not self._cursor:
-            self._cursor = await self._connection.cursor()
+            self._cursor = cast(Cursor, await self._connection.cursor())
 
         return self._cursor
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         """
-        Cleanup the transaction before the connection is returned to the pool
+        Cleanup the transaction before the connection is returned to the pool. Called automatically from the connection pool
+        logic, there should be no reason to call this manually.
         """
         if self._last_result:
             await self._last_result.close()
@@ -212,9 +224,7 @@ class Transaction(AsyncTransactionBase):
             await self._cursor.close()
             self._cursor = None
 
-        await super().cleanup()
-
-    async def query(self, query: str, *args, **kwargs) -> Union[Result, bool]:
+    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result | bool:
         """
         Execute single query inside the transaction scope.
         :param query: Query to execute. Can contain %s for each arg from args.
@@ -227,7 +237,11 @@ class Transaction(AsyncTransactionBase):
             await self._check_transaction_open(query)
 
             if not self._cursor_clean:
-                raise LogicError(query, f"Commands out of sync: You must first process all rows from previous result {self._cursor_clean} {id(self)}.")
+                raise LogicError(
+                    query,
+                    f"Commands out of sync: You must first process all rows from previous "
+                    f"result {self._cursor_clean} {id(self)}.",
+                )
 
             if kwargs:
                 raise LogicError(query, "aiomysql does not support kwargs in query.")
@@ -236,6 +250,8 @@ class Transaction(AsyncTransactionBase):
 
             try:
                 await cursor.execute(query, args)
+
+            # pylint: disable=broad-exception-caught
             except Exception as exc:
                 _query_error_factory(query, exc, self.connection)
 
