@@ -17,11 +17,10 @@ from ..exceptions import (
 from ..exceptions import (
     SyntaxError as QuerySyntaxError,
 )
+from .connection import AioMySQLConnection
 
 
-def _query_error_factory(query: str, exc: Exception, conn: aiomysql.Connection) -> None:
-    # pylint: disable=protected-access
-
+def _query_error_factory(query: str, exc: Exception, conn: AioMySQLConnection) -> None:
     if isinstance(exc, InterfaceError):
         # This is pretty lousy, but unfortunately aiomysql hides all the errors into aiomysql.Error, so we have no way
         # how to catch task cancellation. Unfortunately not event exc.__cause__ is filled in, so comparing to exception
@@ -45,7 +44,7 @@ def _query_error_factory(query: str, exc: Exception, conn: aiomysql.Connection) 
             query,
             exc.args[1] if len(exc.args) > 1 else str(exc),
             exc.args[0],
-            remote_app=f"{conn._user}@{conn._host}:{conn._port}/{conn._db}",
+            remote_app=conn.remote_app,
         )
 
     raise exc

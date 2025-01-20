@@ -24,7 +24,7 @@ from typing import (
 from warnings import warn
 
 from ._sl import _SL
-from .exceptions import EntityNotFound, ImplicitRollback, LogicError, TooManyRowsError
+from .exceptions import EntityNotFound, Error, ImplicitRollback, LogicError, TooManyRowsError
 from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResObjT, ResultRow, SetT, T
 
 
@@ -206,6 +206,82 @@ class Result(ABC):
 
         return cast(SetT | ListT, out)
 
+    @abstractmethod
+    def __bool__(self) -> bool:
+        """
+        Returns True if result is valid and contains rows to be fetched.
+        """
+
+    @property
+    @abstractmethod
+    def remote_app(self) -> str:
+        """Returns remote_app for the result to enhance errors with correct identifier."""
+        return ""
+
+    async def close(self) -> None:  # noqa: B027
+        """
+        Cleanup the result set.
+        """
+
+
+class BoolResult(Result, ABC):
+    """
+    Result of query that did not returned any resultset, just success of the operation. On this result, you cannot
+    perform any fetch operations, just compare it to bool.
+    """
+
+    def __init__(self, *args: Any, bool_result: bool, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._bool_result = bool_result
+
+    @overload
+    async def fetch_list(self, /) -> Optional[list[Any]]: ...
+
+    @overload
+    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]: ...
+
+    async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
+        raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
+
+    @overload
+    async def fetch_dict(self, /) -> Optional[dict[str, Any]]:
+        """
+        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        :return: dict containing mapping from column names to values or None if no rows are remaining in the result set.
+        """
+
+    @overload
+    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> Optional[DictT]:
+        """
+        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        :param cls: Dictionary type that should be returned.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    async def fetch_dict(
+        self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
+    ) -> Optional[DictT | dict[str, Any]]:
+        raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
+
+    @overload
+    async def fetch_object(self, /) -> Optional[ResultRow]: ...
+
+    @overload
+    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, **kwargs: Any) -> Optional[OBJ]: ...
+
+    async def fetch_object(
+        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, **kwargs: Any
+    ) -> Optional[OBJ | ResultRow]:
+        raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
+
+    def __bool__(self) -> bool:
+        """
+        Returns boolean result of the executed query.
+        """
+        return self._bool_result
+
 
 class Transaction(ABC, Generic[ConnectionTypeT]):
     """
@@ -250,7 +326,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
 
     @abstractmethod
-    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result | bool:
+    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
         """
         Execute single query inside the transaction scope.
         :param query: Query to execute. Can contain %s for each arg from args.
@@ -290,7 +366,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         **cls_kwargs: Any,
     ) -> T:
         res = await self.query(query, *(args or []))
-        if not isinstance(res, Result):
+        if not isinstance(res, Result) or isinstance(res, BoolResult):
             raise LogicError(query, "Query did not return result.")
 
         row = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)

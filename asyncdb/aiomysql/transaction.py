@@ -10,7 +10,7 @@ from ..exceptions import LogicError
 from .cursor import Cursor
 from .error import _query_error_factory
 from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
-from .result import Result
+from .result import BoolResult, Result
 
 if TYPE_CHECKING:
     from .connection import AioMySQLConnection
@@ -88,7 +88,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
 
     async def _start_transaction(self) -> None:
         if self._transaction_initiated:
-            raise LogicError("", "Transaction has already been started.")
+            raise LogicError("", "Transaction has already been started.", remote_app=self.remote_app)
 
         self._transaction_initiated = True
 
@@ -177,11 +177,13 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
             await self._start_transaction()
 
         if await self.is_committed():
-            raise LogicError(query, "Cannot perform operation on committed transaction.")
+            raise LogicError(query, "Cannot perform operation on committed transaction.", remote_app=self.remote_app)
 
     async def _clean_cursor(self, result: Result) -> None:
         if self._last_result != result:
-            raise LogicError("", "Commands out of sync: Trying to close different result than last executed.")
+            raise LogicError(
+                "", "Commands out of sync: Trying to close different result than last executed.", remote_app=self.remote_app
+            )
 
         self._last_result = None
 
@@ -218,13 +220,15 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
             self.connection.logger.error("Result.close() did not reset _last_result in transaction.")
 
         if not self._cursor_clean:
-            raise LogicError("", "Commands out of sync: You must first process all rows from previous result.")
+            raise LogicError(
+                "", "Commands out of sync: You must first process all rows from previous result.", remote_app=self.remote_app
+            )
 
         if self._cursor:
             await self._cursor.close()
             self._cursor = None
 
-    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result | bool:
+    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
         """
         Execute single query inside the transaction scope.
         :param query: Query to execute. Can contain %s for each arg from args.
@@ -241,10 +245,11 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
                     query,
                     f"Commands out of sync: You must first process all rows from previous "
                     f"result {self._cursor_clean} {id(self)}.",
+                    remote_app=self.remote_app,
                 )
 
             if kwargs:
-                raise LogicError(query, "aiomysql does not support kwargs in query.")
+                raise LogicError(query, "aiomysql does not support kwargs in query.", remote_app=self.remote_app)
 
             cursor = await self.cursor
 
@@ -260,4 +265,11 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
                 self._last_result = Result(self, cursor, f"{query} with args {args}" if args else query)
                 return self._last_result
 
-            return True
+            return BoolResult(self, True, f"{query} with args {args}" if args else query)
+
+    @property
+    def remote_app(self) -> str:
+        """
+        Remote app associated with the transaction to enhance error messages.
+        """
+        return self.connection.remote_app

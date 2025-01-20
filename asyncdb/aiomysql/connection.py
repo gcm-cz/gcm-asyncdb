@@ -35,14 +35,15 @@ class AioMySQLConnection(aiomysql.Connection):
         init_command: Optional[str] = None,
         connect_timeout: Optional[int] = None,
         read_default_group: Optional[int] = None,
-        autocommit: Optional[bool] = False,
-        echo: Optional[bool] = False,
-        local_infile: Optional[bool] = False,
+        autocommit: bool = False,
+        echo: bool = False,
+        local_infile: bool = False,
         loop: Optional[AbstractEventLoop] = None,
         ssl: Optional[SSLContext] = None,
-        auth_plugin: Optional[str] = "",
-        program_name: Optional[str] = "",
+        auth_plugin: str = "",
+        program_name: str = "",
         server_public_key: Optional[str] = None,
+        remote_app: str = "",
     ) -> None:
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         super().__init__(
@@ -74,6 +75,7 @@ class AioMySQLConnection(aiomysql.Connection):
 
         self.logger = logger.getChild(f"mysql.{self.db}") if self.db else logger.getChild("mysql")
         self.observers: set[QueryObserver] = {LoggingObserver(self.logger)}
+        self.remote_app = remote_app or f"{self._user}@{self._host}:{self._port}/{self._db}"
 
     def attach(self, observer: QueryObserver) -> None:
         """Attach new observer instance to the connection."""
@@ -176,7 +178,7 @@ class AioMySQLConnection(aiomysql.Connection):
             await super().set_charset(charset)
 
     def __repr__(self) -> str:
-        return f"<aiomysql.Connection 0x{id(self):x} {self._user}@{self._host}:{self._port}/{self._db}>"
+        return f"<aiomysql.Connection 0x{id(self):x} {self.remote_app}>"
 
 
 AioMySQLConnection.__init__.__doc__ = aiomysql.Connection.__init__.__doc__

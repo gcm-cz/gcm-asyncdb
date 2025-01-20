@@ -4,6 +4,7 @@ import datetime
 from copy import copy
 from typing import TYPE_CHECKING, Any, Optional, Type, overload
 
+from ..asyncdb import BoolResult as BoolResultBase
 from ..asyncdb import Result as AsyncResultBase
 from ..exceptions import LogicError
 from ..generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
@@ -18,7 +19,7 @@ class Result(AsyncResultBase):
     Result of query.
     """
 
-    def __init__(self, transaction: Transaction, cursor: Cursor, query: str) -> None:
+    def __init__(self, transaction: Transaction, cursor: Optional[Cursor], query: str) -> None:
         self.transaction = transaction
         self.cursor = cursor
         self._closed = False
@@ -31,20 +32,25 @@ class Result(AsyncResultBase):
         if self._closed:
             return
 
-        # Consume all rows in current result set.
-        while await self.cursor.fetchone():
-            pass
-
-        # Consume all remaining result sets.
-        while await self.cursor.nextset():
+        if self.cursor:
+            # Consume all rows in current result set.
             while await self.cursor.fetchone():
                 pass
 
-        # pylint: disable=protected-access
-        await self.transaction._clean_cursor(self)
+            # Consume all remaining result sets.
+            while await self.cursor.nextset():
+                while await self.cursor.fetchone():
+                    pass
+
+            # pylint: disable=protected-access
+            await self.transaction._clean_cursor(self)
+
         self._closed = True
 
     async def _fetch_raw(self) -> Optional[Any]:
+        if not self.cursor:
+            return None
+
         row = await self.cursor.fetchone()
         if not row and await self.cursor.nextset():
             row = await self.cursor.fetchone()
@@ -118,7 +124,7 @@ class Result(AsyncResultBase):
             return None
 
         result = cls(*args, **kwargs)
-        for idx, column in enumerate(self.cursor.description):
+        for idx, column in enumerate(self.description):
             result[column[0]] = self._process_value(row[idx])
 
         return result
@@ -161,13 +167,13 @@ class Result(AsyncResultBase):
         my_kwargs = copy(kwargs)
 
         if as_kwargs:
-            for idx, column in enumerate(self.cursor.description):
+            for idx, column in enumerate(self.description):
                 my_kwargs[column[0]] = self._process_value(row[idx])
 
         result = cls(*args, **my_kwargs)
 
         if not as_kwargs:
-            for idx, column in enumerate(self.cursor.description):
+            for idx, column in enumerate(self.description):
                 setattr(result, column[0], self._process_value(row[idx]))
 
         return result
@@ -196,7 +202,39 @@ class Result(AsyncResultBase):
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
         """
-        if len(self.cursor.description) != 1:
-            raise LogicError(self._query, "Query returned more than one column.")
+        if len(self.description) != 1:
+            raise LogicError(self._query, "Query returned more than one column.", remote_app=self.remote_app)
 
         return await super().fetch_all_scalar(factory)
+
+    @property
+    def description(self) -> list[tuple[str, ...]]:
+        """
+        Description of the columns in the result set.
+        """
+        if not self.cursor:
+            return []
+
+        return self.cursor.description
+
+    @property
+    def remote_app(self) -> str:
+        """
+        Remote app associated with the transaction to enhance error messages.
+        """
+        return self.transaction.remote_app
+
+    def __bool__(self) -> bool:
+        return True
+
+
+class BoolResult(BoolResultBase, Result):
+    """
+    Returns boolean result of the query.
+    """
+
+    def __init__(self, transaction: Transaction, bool_result: bool, query: str) -> None:
+        super().__init__(transaction, None, query, bool_result=bool_result)
+
+    def __repr__(self) -> str:
+        return f"<Result {self._bool_result}>"

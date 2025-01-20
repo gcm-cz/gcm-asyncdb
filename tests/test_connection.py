@@ -2,6 +2,8 @@ import warnings
 
 from .mock import MockConnectionWrapper  # MUST BE BEFORE asyncdb IMPORTS!!!
 
+from asyncdb.aiomysql.result import BoolResult
+
 import pytest
 from pymysql import ProgrammingError
 from pymysql.constants import ER
@@ -78,3 +80,12 @@ async def test_errors(connection):
 
             with pytest.raises(SyntaxError):
                 await transaction.query("SYNTAX ERROR")
+
+
+@pytest.mark.asyncio
+async def test_bool_result(connection):
+    with pytest.warns(ImplicitRollback):
+        async with Transaction(connection) as transaction:
+            q = await transaction.query("COMMIT")
+            assert isinstance(q, BoolResult)
+            assert bool(q) is True
