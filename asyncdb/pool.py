@@ -126,7 +126,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             """
             ...
 
-        async def query(self, query: str, *args: Any, **kwargs: Any) -> Result | bool:
+        async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
             # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
             """
             Execute single query inside the transaction scope.
