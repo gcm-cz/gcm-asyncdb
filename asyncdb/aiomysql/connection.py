@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import datetime
 from asyncio import AbstractEventLoop
 from ssl import SSLContext
-from typing import Any, Callable, Optional, Type
+from typing import Any, Callable, Optional, Type, cast
 
 import aiomysql
-from pymysql.constants import COMMAND
-from pymysql.converters import decoders
+from pymysql.constants import COMMAND, FIELD_TYPE
+from pymysql.converters import convert_datetime, decoders
 
 from .. import logger
 from .._sl import _SL
@@ -44,8 +45,28 @@ class AioMySQLConnection(aiomysql.Connection):
         program_name: str = "",
         server_public_key: Optional[str] = None,
         remote_app: str = "",
+        timezone: Optional[datetime.tzinfo] = datetime.timezone.utc,
     ) -> None:
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
+
+        if conv is None:
+            conv = decoders.copy()
+
+            if timezone is not None:
+                # Produce timezone-aware datetimes with specified timezone information.
+                def convert_datetime_with_tz(obj: Any) -> datetime.datetime:
+                    return cast(datetime.datetime, convert_datetime(obj)).replace(tzinfo=timezone)
+
+                conv[FIELD_TYPE.DATETIME] = convert_datetime_with_tz
+
+                # Set correct timezone for the connection too.
+                offset = timezone.utcoffset(datetime.datetime.now())  # noqa: DTZ005  # We want local time here.
+                if offset is not None:
+                    hours = offset.seconds // 3600
+                    minutes = (offset.seconds // 60) % 60
+
+                    init_command = f"SET time_zone='{hours:+03d}:{minutes:02d}'; {init_command}"
+
         super().__init__(
             host,
             user,
@@ -56,7 +77,7 @@ class AioMySQLConnection(aiomysql.Connection):
             charset,
             sql_mode,
             read_default_file,
-            conv if conv is not None else decoders,
+            conv,
             use_unicode,
             client_flag,
             cursorclass,
@@ -73,6 +94,7 @@ class AioMySQLConnection(aiomysql.Connection):
             server_public_key,
         )
 
+        self.timezone = timezone
         self.logger = logger.getChild(f"mysql.{self.db}") if self.db else logger.getChild("mysql")
         self.observers: set[QueryObserver] = {LoggingObserver(self.logger)}
         self.remote_app = remote_app or f"{self._user}@{self._host}:{self._port}/{self._db}"

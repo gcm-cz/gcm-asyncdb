@@ -57,9 +57,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
             autocommit=False,
             use_unicode=True,
             connect_timeout=self.config.connect_timeout,
-            init_command=f"SET time_zone='+00:00'; "
-            f"SET net_read_timeout={self.config.read_timeout}; "
-            f"SET net_write_timeout={self.config.write_timeout};",
+            timezone=self.config.timezone,
+            init_command=f"SET net_read_timeout={self.config.read_timeout}; SET net_write_timeout={self.config.write_timeout};",
         )
 
         conn.logger.debug(

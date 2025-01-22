@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+from datetime import timezone, tzinfo
 from typing import Optional, Protocol
 
 
 class MySQLConfigProtocol(Protocol):
     """
-    Protocol for
+    Protocol for MySQL configuration.
     """
 
     host: str
@@ -22,10 +23,11 @@ class MySQLConfigProtocol(Protocol):
     read_timeout: int
     write_timeout: int
     remote_app: Optional[str]
+    timezone: Optional[tzinfo] = None
 
 
 @dataclass
-class MySQLConfig:  # pylint: disable=too-many-instance-attributes
+class MySQLConfig(MySQLConfigProtocol):  # pylint: disable=too-many-instance-attributes
     """
     MySQL connection configuration.
     """
@@ -45,3 +47,4 @@ class MySQLConfig:  # pylint: disable=too-many-instance-attributes
     read_timeout: int = 60
     write_timeout: int = 60
     remote_app: Optional[str] = None
+    timezone: Optional[tzinfo] = timezone.utc

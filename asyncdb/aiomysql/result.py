@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 from copy import copy
 from typing import TYPE_CHECKING, Any, Optional, Type, overload
 
@@ -61,13 +60,6 @@ class Result(AsyncResultBase):
 
         return row
 
-    @staticmethod
-    def _process_value(value: Any) -> Any:
-        if isinstance(value, datetime.datetime):
-            return value.replace(tzinfo=datetime.timezone.utc)
-
-        return value
-
     @overload
     async def fetch_list(self, /) -> Optional[list[Any]]: ...
 
@@ -87,8 +79,7 @@ class Result(AsyncResultBase):
             return None
 
         result = cls(*args, **kwargs)
-        for column in row:
-            result.append(self._process_value(column))
+        result.extend(row)
 
         return result
 
@@ -125,7 +116,7 @@ class Result(AsyncResultBase):
 
         result = cls(*args, **kwargs)
         for idx, column in enumerate(self.description):
-            result[column[0]] = self._process_value(row[idx])
+            result[column[0]] = row[idx]
 
         return result
 
@@ -168,13 +159,13 @@ class Result(AsyncResultBase):
 
         if as_kwargs:
             for idx, column in enumerate(self.description):
-                my_kwargs[column[0]] = self._process_value(row[idx])
+                my_kwargs[column[0]] = row[idx]
 
         result = cls(*args, **my_kwargs)
 
         if not as_kwargs:
             for idx, column in enumerate(self.description):
-                setattr(result, column[0], self._process_value(row[idx]))
+                setattr(result, column[0], row[idx])
 
         return result
 
