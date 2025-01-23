@@ -32,6 +32,7 @@ import wrapt
 from . import logger
 from ._sl import _SL
 from .asyncdb import Result, Transaction
+from .exceptions import UnableToCreateConnection
 from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow
 
 if TYPE_CHECKING:
@@ -42,6 +43,8 @@ class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
     # pylint: disable=abstract-method
 
     """
+    @private
+
     Helper class that is injected to each connection to be able to track usage of the connection to provide lifecycle
     to the pool.
     """
@@ -78,6 +81,8 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
     # pylint: disable=abstract-method
 
     """
+    @private
+
     Helper class that is injected to each transaction to return transaction to the pool when not used anymore.
     """
 
@@ -314,13 +319,6 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             ...
 
 
-class UnableToCreateConnection(RuntimeError):
-    """
-    Exception thrown when connection cannot be created. It might be caused by connection failint to establish or
-    initial check after establishing the connection fails.
-    """
-
-
 class PoolMetrics:
     """
     Metrics for the connection pool.
@@ -333,7 +331,8 @@ class PoolMetrics:
 
 class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-instance-attributes
     """
-    Generic connection pool for anything.
+    Generic connection pool for anything. Not related directly to the database. The database connection pool is just a special
+    case of generic connection pool.
     """
 
     def __init__(
@@ -374,40 +373,57 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
             raise AttributeError("max_conn_usage must be greater or equal to zero")
 
         self.connection_class = connection_class
-        self.log = logger.getChild("pool")
-        self.loop = kwargs.get("loop", asyncio.get_running_loop())
-
+        """Class used to make new connections."""
         self.args = args
+        """Arguments passed to connection_class constructor."""
         self.kwargs = kwargs
+        """Keyword arguments passed to connection_class constructor."""
+
+        self.log = logger.getChild("pool")
+        """Logger for the pool related messages."""
+
+        self.loop = kwargs.get("loop", asyncio.get_running_loop())
+        """Connection pool used for the loop. Defaults to currently running event loop."""
 
         self.max_pool_size = max_pool_size
+        """Maximum number of connections this pool can contain at any time, including used ones."""
+
         self.max_spare_conns = max_spare_conns
+        """Maximum number of spare connections this pool will hold."""
+
         self.min_spare_conns = min_spare_conns
+        """Minimum number of spare connections this pool will hold."""
+
         self.max_conn_lifetime = max_conn_lifetime
+        """Maximum number of seconds one connection can be kept alive before terminating and replacing it with fresh one."""
+
         self.max_conn_usage = max_conn_usage
+        """Maximum number of usages each connection can have before terminating and replacing it with fresh one."""
 
         self.queue = Queue[CountedConnection[ConnectionTypeT]]()
+        """Queue holding the available (spare) connections."""
 
-        self.connections_in_use = 0
+        self._connections_in_use = 0
 
         self._keeper_task_done: Optional[Task[None]] = None
         if keeper_task:
-            self.start_keeper_task()
+            self._start_keeper_task()
 
         self.metrics = PoolMetrics()
+        """Default metrics instance. Can be changed using `set_metrics()` method."""
 
         self._shutdown = False
 
     def __bool__(self) -> bool:
         """
-        Return True if pool is healthy and have available connection.
+        Return True if pool is healthy and has available connection.
         """
         return self.queue.qsize() > 0
 
     @property
     def remote_app(self) -> str:
         """
-        This property should be overriden in derived classes to provide more specific remote_app specification.
+        This property should be overridden in derived classes to provide more specific remote_app specification.
         """
         return "generic-connection-pool"
 
@@ -428,11 +444,11 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         self.metrics.used_connections = used_connections
         self.metrics.connection_limit = connection_limit
 
-    def start_keeper_task(self) -> None:
+    def _start_keeper_task(self) -> None:
         """
-        Start the keeper task.
+        Start the keeper task that checks connections and maintains pool size.
         """
-        self._keeper_task_done = self.loop.create_task(self.keeper_task())
+        self._keeper_task_done = self.loop.create_task(self._keeper_task())
         if self._keeper_task_done:
             self._keeper_task_done.set_name("connection_pool_keeper")
 
@@ -454,7 +470,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         properties are forwarded too.
         """
         if self.queue.empty():
-            if self.connections_in_use >= self.max_pool_size:
+            if self._connections_in_use >= self.max_pool_size:
                 self.log.warning(
                     "Connection pool is empty, unable to retrieve connection immediately.", stacklevel=stacklevel + 1
                 )
@@ -480,7 +496,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
             "Connection still has transaction outstanding. This is probably bug in library."  # noqa: S101
         # fmt: on
 
-        self.connections_in_use += 1
+        self._connections_in_use += 1
         conn.used += 1
 
         self.log.debug("Reusing existing connection %r.", conn)
@@ -497,7 +513,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
     async def make_conn(self, use: bool = False) -> CountedConnection[ConnectionTypeT]:
         """
         Method is called internally by connection pool to create new connection. This in fact just calls create_conn()
-        and wraps the connection into WrappedConnection class.
+        and wraps the connection into CountedConnection class.
         :param use: if True, the connection will be marked as used right away.
         :return: Wrapped fresh connection.
         :raises: UnableToCreateConnection if connection failed to create.
@@ -510,7 +526,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
             raise UnableToCreateConnection() from exc
 
         if use:
-            self.connections_in_use += 1
+            self._connections_in_use += 1
             conn.used += 1
 
         self.log.debug("Created new connection %r.", conn)
@@ -555,7 +571,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
                 await self.close_conn(conn)
         finally:
-            self.connections_in_use -= 1
+            self._connections_in_use -= 1
 
     async def close_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:  # pylint: disable=no-self-use
         """Close one connection."""
@@ -575,7 +591,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
             except QueueEmpty:
                 pass
 
-    async def shutdown_keeper_task(self) -> None:
+    async def _shutdown_keeper_task(self) -> None:
         """
         Method used to signal the keeper task to stop. It waits until the task is finished.
         """
@@ -636,12 +652,12 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
             self.metrics.idle_connections.set(self.queue.qsize())
 
         if self.metrics.used_connections is not None:
-            self.metrics.used_connections.set(self.connections_in_use)
+            self.metrics.used_connections.set(self._connections_in_use)
 
         if self.metrics.connection_limit is not None:
             self.metrics.connection_limit.set(self.max_pool_size)
 
-    async def keeper_task_iteration(self) -> None:
+    async def _keeper_task_iteration(self) -> None:
         """
         One iteration of keeper task.
         """
@@ -653,7 +669,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
             to_purge = min(self.queue.qsize() - self.max_spare_conns, self.queue.qsize() - self.min_spare_conns)
             to_create = min(
-                self.min_spare_conns - self.queue.qsize(), self.max_pool_size - self.queue.qsize() - self.connections_in_use
+                self.min_spare_conns - self.queue.qsize(), self.max_pool_size - self.queue.qsize() - self._connections_in_use
             )
 
             if to_purge > 0:
@@ -668,7 +684,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         except Exception as exc:  # pylint: disable=broad-except
             self.log.exception(exc)
 
-    async def keeper_task(self) -> None:
+    async def _keeper_task(self) -> None:
         """
         Keeper task maintaining lifecycle of the connections. It periodically checks connections for health,
         discards too old connections and spins new ones when there is not enough connections in the pool.
@@ -676,7 +692,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         """
         try:
             while True:
-                await self.keeper_task_iteration()
+                await self._keeper_task_iteration()
                 await asyncio.sleep(1.0)
         except CancelledError:
             pass
@@ -686,7 +702,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         """
         Return total number of connections currently handled by pool.
         """
-        return self.queue.qsize() + self.connections_in_use
+        return self.queue.qsize() + self._connections_in_use
 
     @property
     def current_pool_free(self) -> int:
@@ -695,12 +711,17 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         """
         return self.queue.qsize()
 
+    @property
+    def connections_in_use(self) -> int:
+        """Number of connections currently in use."""
+        return self._connections_in_use
+
     async def close(self) -> None:
         """
         Close the pool. Stop the keeper task and do cleanup.
         """
         self.log.debug("Shutting down pool.")
-        await self.shutdown_keeper_task()
+        await self._shutdown_keeper_task()
         await self.close_connections()
         self.log.debug("Pool shutdown complete.")
 
@@ -738,6 +759,7 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         """
         super().__init__(*args, **kwargs)
         self.transaction_class = transaction_class
+        """Class used to create transaction instances."""
 
     async def get_transaction(self, *, stacklevel: int = 1) -> TransactionTypeT:
         """
@@ -750,7 +772,10 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         trans = PooledTransaction(self.transaction_class(conn), pool=self)
         conn.current_transaction = trans
 
-        return trans
+        # PooledTransaction is not really a TransactionTypeT, but it is object wrapper that acts like it is. For better
+        # type hinting in IDE, we cast this to expected type. In runtime, it just works by proxying all calls to the
+        # actual transaction object.
+        return cast(TransactionTypeT, trans)
 
 
 T = TypeVar("T", bound=ConnectionPool[Any])

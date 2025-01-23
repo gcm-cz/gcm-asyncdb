@@ -47,6 +47,14 @@ build-wheel:
     paths:
       - dist/*
 
+build-docs:
+  image: harbor.srv.gcm.cz/ci/baseimage/python:3.11
+  stage: build
+  pages: true
+  script:
+    - poetry install --with=dev
+    - poetry run pdoc -o ./public asyncdb
+
 release-wheel:
   image: harbor.srv.gcm.cz/ci/baseimage/python:3.11-ci
   stage: release

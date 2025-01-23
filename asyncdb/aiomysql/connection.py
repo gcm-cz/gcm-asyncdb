@@ -16,7 +16,7 @@ from .observer import LoggingObserver, ObserverContext, QueryObserver, _QueryObs
 
 
 class AioMySQLConnection(aiomysql.Connection):
-    """Wrapper for aiomysql.Connection that allows observing queries."""
+    """Wrapper for aiomysql.Connection that allows observing queries, correctly sets timeouts, and provides timezone support."""
 
     def __init__(
         self,
@@ -48,6 +48,39 @@ class AioMySQLConnection(aiomysql.Connection):
         timezone: Optional[datetime.tzinfo] = datetime.timezone.utc,
     ) -> None:
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
+        """
+        Establish a connection to the MySQL database. Accepts several arguments:
+
+        :param host: Hostname of the database to connect to.
+        :param user: Username to authenticate as.
+        :param password: Password to authenticate with.
+        :param db: Database to use.
+        :param port: TCP port of the MySQL server.
+        :param unix_socket: Optionally, you can use a unix socket rather than TCP/IP.
+        :param charset: Charset you want to use.
+        :param sql_mode: Default SQL_MODE to use.
+        :param read_default_file: Specifies my.cnf file to read these parameters from under the [client] section.
+        :param conv: Decoders dictionary to use instead of the default one. This is used to provide custom marshalling of types.
+        :param use_unicode: Whether or not to default to unicode strings.
+        :param client_flag: Custom flags to send to MySQL. Find potential values in pymysql.constants.CLIENT.
+        :param cursorclass: Custom cursor class to use.
+        :param init_command: Initial SQL statement to run when connection is established.
+        :param connect_timeout: Timeout before throwing an exception when connecting.
+        :param read_default_group: Group to read from in the configuration file.
+        :param autocommit: Autocommit mode. None means use server default. (default: False)
+        :param echo:
+        :param local_infile: boolean to enable the use of LOAD DATA LOCAL command. (default: False)
+        :param loop: asyncio loop to use for the connection.
+        :param ssl: Optional SSL context to force SSL.
+        :param auth_plugin: String to manually specify the authentication plugin to use, i.e you will want to use
+            mysql_clear_password when using IAM authentication with Amazon RDS. (default: Server default)
+        :param program_name: Program name string to provide when handshaking with MySQL. (omitted by default)
+        :param server_public_key: SHA256 authentication plugin public key value. (default: None)
+        :param remote_app: Identifier of the connection. Used for logging and is populated to exceptions.
+        :param timezone: Timezone configured for the connection. It is set as connection attribute, so database will know
+            what timezone it should accept. Also it is used to populate the tzinfo attribute of datetime objects.
+            When None, naive datetimes are used and no timezone information is sent to the database. (default: UTC)
+        """
 
         if conv is None:
             conv = decoders.copy()
@@ -55,7 +88,7 @@ class AioMySQLConnection(aiomysql.Connection):
             if timezone is not None:
                 # Produce timezone-aware datetimes with specified timezone information.
                 def convert_datetime_with_tz(obj: Any) -> datetime.datetime:
-                    return cast(datetime.datetime, convert_datetime(obj)).replace(tzinfo=timezone)
+                    return cast(datetime.datetime, convert_datetime(obj)).replace(tzinfo=self.timezone)
 
                 conv[FIELD_TYPE.DATETIME] = convert_datetime_with_tz
 
@@ -95,9 +128,21 @@ class AioMySQLConnection(aiomysql.Connection):
         )
 
         self.timezone = timezone
+        """
+        Timezone configured for the connection. It is used to populate the tzinfo attribute of datetime objects.
+
+        Note that changing this during runtime won't affect the connection's timezone, but will affect tzinfo attribute
+        of datetimes returned in the result sets.
+        """
+
         self.logger = logger.getChild(f"mysql.{self.db}") if self.db else logger.getChild("mysql")
+        """Logger for this database."""
+
         self.observers: set[QueryObserver] = {LoggingObserver(self.logger)}
+        """Observers for this connection. By default, LoggingObserver is always present."""
+
         self.remote_app = remote_app or f"{self._user}@{self._host}:{self._port}/{self._db}"
+        """Identifier of the connection. Used for logging and is populated to exceptions."""
 
     def attach(self, observer: QueryObserver) -> None:
         """Attach new observer instance to the connection."""

@@ -23,6 +23,8 @@ from typing import (
 )
 from warnings import warn
 
+from typing_extensions import deprecated
+
 from ._sl import _SL
 from .exceptions import EntityNotFound, Error, ImplicitRollback, LogicError, TooManyRowsError
 from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResObjT, ResultRow, SetT, T
@@ -30,19 +32,31 @@ from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResObj
 
 class Result(ABC):
     """
-    Asynchronous result of query
+    Abstract base class representing result of query.
     """
 
     @overload
-    async def fetch_list(self, /) -> Optional[list[Any]]: ...
+    async def fetch_list(self, /) -> Optional[list[Any]]:
+        """
+        Fetch one row from result as `list` (indexed column access).
+        :return: `list` with row data or None if no rows are remaining in the result set.
+        """
 
     @overload
-    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]: ...
+    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]:
+        """
+        Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument.
+        :param cls: List type that should be returned. Defaults to plain list.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs to the cls constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
 
     @abstractmethod
     async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
         """
-        Fetch one row from result as list. The list type can be specified as the cls argument.
+        Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument,
+        defaults to `list`.
         :param cls: List type that should be returned. Defaults to plain list.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs to the cls constructor.
@@ -71,7 +85,8 @@ class Result(ABC):
         self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
     ) -> Optional[DictT | dict[str, Any]]:
         """
-        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        Fetch one row from result as dictionary (mapping). The dictionary type can be specified as the cls argument. Defaults
+        to `dict`.
         :param cls: Dictionary type that should be returned. Defaults to plain dict.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -79,19 +94,34 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_object(self, /) -> Optional[ResultRow]: ...
+    async def fetch_object(self, /) -> Optional[ResultRow]:
+        """
+        Fetch one row from result as `ResultRow` objects.
+        :return: Instance of cls created from result row or `None` if no rows are remaining in the result set.
+        """
 
     @overload
-    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, **kwargs: Any) -> Optional[OBJ]: ...
-
-    @abstractmethod
     async def fetch_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, **kwargs: Any
-    ) -> Optional[OBJ | ResultRow]:
+        self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+    ) -> Optional[OBJ]:
         """
         Fetch one row from result as object of type specified by the cls argument.
         :param cls: Class (or factory) representing the object that should be returned.
-        :param args: Arguments to the cls constructor.
+        :param args: Arguments to the `cls` constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
+
+    @abstractmethod
+    async def fetch_object(
+        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+    ) -> Optional[OBJ | ResultRow]:
+        """
+        Fetch one row from result as object of type specified by the cls argument. Defaults to generic `ResultRow` object.
+        :param cls: Class (or factory) representing the object that should be returned.
+        :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
           will be set directly using setattr().
         :param kwargs: Optional kwargs for the constructor.
@@ -111,50 +141,92 @@ class Result(ABC):
             yield row
 
     @overload
-    def fetch_all_object(self, /) -> AsyncGenerator[ResultRow, None]: ...
+    def fetch_all_object(self, /, *, as_kwargs: bool = False) -> AsyncGenerator[ResultRow, None]:
+        """
+        Generate objects of type `ResultRow` for each row of the result set.
+        :return: Generator generating result rows as ResultRow objects.
+        """
 
     @overload
-    def fetch_all_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, **kwargs: Any) -> AsyncGenerator[OBJ, None]: ...
+    def fetch_all_object(
+        self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+    ) -> AsyncGenerator[OBJ, None]:
+        """
+        Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
+        to the `cls` constructor.
+        :param cls: Class (or factory) representing the object that should be returned.
+        :param args: Arguments to the `cls` constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Generator generating result rows as objects of specified type.
+        """
 
     async def fetch_all_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, **kwargs: Any
+        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
     ) -> AsyncGenerator[ResultRow | OBJ, None]:
         """
-        Generate objects of type cls for each row of the result set, with optionally passing args and kwargs to the
-        cls constructor.
-        :param cls: See fetch_object for details
-        :param args: See fetch_object for details
-        :param kwargs: See fetch_object for details
-        :return: Generator generating result rows as objects
+        Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
+        to the `cls` constructor. Defaults to `ResultRow` generic object.
+        :param cls: Class (or factory) representing the object that should be returned.
+        :param args: Arguments to the `cls` constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Generator generating result rows as objects of specified type.
         """
-        async for row in self._fetch_all(self.fetch_object, cls, *args, **kwargs):
+        async for row in self._fetch_all(self.fetch_object, cls, *args, as_kwargs=as_kwargs, **kwargs):
             yield cast(OBJ, row)
 
     @overload
-    def fetch_all_dict(self, /) -> AsyncGenerator[dict[str, Any], None]: ...
+    def fetch_all_dict(self, /) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        Generate dicts for each row of the result set.
+        :return: Generator generating result rows as dicts.
+        """
 
     @overload
-    def fetch_all_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[DictT, None]: ...
+    def fetch_all_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[DictT, None]:
+        """
+        Generate dicts of type `cls` for each row of the result set, with optionally passing args and kwargs to the
+        cls constructor.
+        :param cls: Dictionary type that should be returned.
+        :param args: Arguments to the `cls` constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Generator generating result rows as dicts of specified type.
+        """
 
     async def fetch_all_dict(
         self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
     ) -> AsyncGenerator[DictT | dict[str, Any], None]:
         """
-        Generate dicts of type cls for each row of the result set, with optionally passing args and kwargs to the
-        cls constructor.
-        :param cls: See fetch_dict for details
-        :param args: See fetch_dict for details
-        :param kwargs: See fetch_dict for details
-        :return: Generator generating result rows as dicts
+        Generate dicts of type `cls` for each row of the result set, with optionally passing args and kwargs to the
+        cls constructor. Defaults to plain `dict`.
+        :param cls: Dictionary type that should be returned.
+        :param args: Arguments to the `cls` constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Generator generating result rows as dicts of specified type.
         """
         async for row in self._fetch_all(self.fetch_dict, cls, *args, **kwargs):
             yield cast(DictT, row)
 
     @overload
-    def fetch_all_list(self, /) -> AsyncGenerator[list[Any], None]: ...
+    def fetch_all_list(self, /) -> AsyncGenerator[list[Any], None]:
+        """
+        Generate `list` with row data for each row of the result set.
+        :return: Generator generating result rows as `list`s
+        """
 
     @overload
-    def fetch_all_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[ListT, None]: ...
+    def fetch_all_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[ListT, None]:
+        """
+        Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
+        cls constructor.
+        :param cls: List type that should be returned.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Generator generating result rows as lists of specified type.
+        """
 
     async def fetch_all_list(
         self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any
@@ -162,10 +234,10 @@ class Result(ABC):
         """
         Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
         cls constructor.
-        :param cls: See fetch_list for details
-        :param args: See fetch_list for details
-        :param kwargs: See fetch_list for details
-        :return: Generator generating result rows as lists
+        :param cls: List type that should be returned. Defaults to plain `list`.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs for the constructor.
+        :return: Generator generating result rows as lists of specified type.
         """
         async for row in self._fetch_all(self.fetch_list, cls, *args, **kwargs):
             yield cast(ListT, row)
@@ -193,7 +265,7 @@ class Result(ABC):
     async def fetch_all_scalar(self, factory: Type[SetT | ListT | list[Any]] = list) -> SetT | ListT | list[Any]:
         """
         Fetch all rows from the result set as scalars.
-        :param factory: Factory to use for the output type. Can be MutableSet or MutableSequence.
+        :param factory: Factory to use for the output type. Can be MutableSet or MutableSequence. Defaults to `list`.
         """
         if not inspect.isclass(factory) or not issubclass(factory, (MutableSet, MutableSequence)):
             raise AttributeError("Unknown type factory. Can be only MutableSet or MutableSequence.")
@@ -220,17 +292,22 @@ class Result(ABC):
 
     async def close(self) -> None:  # noqa: B027
         """
-        Cleanup the result set.
+        Cleanup the result set. This is called automatically by transaction, you don't need to call it manually.
         """
 
 
 class BoolResult(Result, ABC):
     """
-    Result of query that did not returned any resultset, just success of the operation. On this result, you cannot
+    Result of query that does not return any result set, just success of the operation. On this result, you cannot
     perform any fetch operations, just compare it to bool.
     """
 
     def __init__(self, *args: Any, bool_result: bool, **kwargs: Any) -> None:
+        """
+        :param args: Arguments passed to the super class constructor.
+        :param bool_result: Actual bool result of the query.
+        :param kwargs: Keyword arguments passed to the super class constructor.
+        """
         super().__init__(*args, **kwargs)
         self._bool_result = bool_result
 
@@ -241,28 +318,23 @@ class BoolResult(Result, ABC):
     async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]: ...
 
     async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
+        """
+        On BoolResult, you cannot fetch any rows, so this method always raises an error.
+        """
         raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
 
     @overload
-    async def fetch_dict(self, /) -> Optional[dict[str, Any]]:
-        """
-        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
-        :return: dict containing mapping from column names to values or None if no rows are remaining in the result set.
-        """
+    async def fetch_dict(self, /) -> Optional[dict[str, Any]]: ...
 
     @overload
-    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> Optional[DictT]:
-        """
-        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
-        :param cls: Dictionary type that should be returned.
-        :param args: Optional arguments to the cls constructor.
-        :param kwargs: Optional kwargs for the constructor.
-        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
-        """
+    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, as_kwargs: bool = False, **kwargs: Any) -> Optional[DictT]: ...
 
     async def fetch_dict(
-        self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
+        self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
     ) -> Optional[DictT | dict[str, Any]]:
+        """
+        On BoolResult, you cannot fetch any rows, so this method always raises an error.
+        """
         raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
 
     @overload
@@ -274,6 +346,9 @@ class BoolResult(Result, ABC):
     async def fetch_object(
         self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, **kwargs: Any
     ) -> Optional[OBJ | ResultRow]:
+        """
+        On BoolResult, you cannot fetch any rows, so this method always raises an error.
+        """
         raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
 
     def __bool__(self) -> bool:
@@ -285,10 +360,13 @@ class BoolResult(Result, ABC):
 
 class Transaction(ABC, Generic[ConnectionTypeT]):
     """
-    Asynchronous transaction
+    Abstract base class representing asynchronous transaction interface.
     """
 
     def __init__(self, connection: ConnectionTypeT) -> None:
+        """
+        :param connection: Connection this transaction should use.
+        """
         self._connection = connection
 
     def __enter__(self) -> None:
@@ -518,11 +596,15 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
 
 
+@deprecated("Use Result.fetch_all_object directly.")
 class ObjectFetcher(Generic[ResObjT]):
     """
     Helper class that acts as generator that fetches objects. The only difference between Result.fetch_all_object is,
     that this can be type-safe parametrized with actual type of object that it should generate, which helps with
     code completion and mypy checks.
+
+    This should not be needed anymore, but is there for backward compatibility. Currently, fetch_object should be
+    correctly typed for Python 3.11+ to provide correct type hints.
     """
 
     def __init__(
@@ -549,7 +631,7 @@ class ObjectFetcher(Generic[ResObjT]):
 
     def __aiter__(self) -> Self:
         """
-        Begining of the iteration.
+        Beginning of the iteration.
         """
         return self
 

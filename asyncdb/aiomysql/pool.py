@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional, cast
 
 import aiomysql
 
@@ -24,6 +24,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :param kwargs: Any additional arguments for either the connection pool or the database constructor.
         """
         self.config = config or MySQLConfig()
+        """Configuration used to spawn MySQL connections and to configure the pool."""
+
         super().__init__(
             Transaction,
             AioMySQLConnection,
@@ -37,6 +39,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
 
     @property
     def remote_app(self) -> str:
+        """Remote application identifier for the connections in the pool."""
         if self.config.remote_app is None:
             return f"{self.config.user}@{self.config.host}:{self.config.port}/{self.config.database}"
 
@@ -105,12 +108,16 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
             return False
 
     async def close_conn(self, conn: AioMySQLConnection) -> None:
+        """
+        Close MySQL connection.
+        :param conn: Connection to close.
+        """
         self.log.debug("Closing connection %r.", conn)
         await conn.ensure_closed()
 
     async def get_transaction(
         self, isolation_level: Optional[TransactionIsolationLevel] = None, *, stacklevel: int = 1
-    ) -> PooledTransaction[Transaction]:
+    ) -> Transaction:
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
@@ -122,7 +129,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         trans = PooledTransaction(self.transaction_class(conn, isolation_level), pool=self)
         conn.current_transaction = trans
 
-        return trans
+        return cast(Transaction, trans)
 
 
 @asynccontextmanager

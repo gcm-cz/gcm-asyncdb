@@ -54,9 +54,14 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         self._cursor_clean = True
 
         self.observers: set[TransactionObserver] = set()
+        """Observers attached to the transaction."""
+
         self.observer_context: dict[int, Any] = {}
+        """Context for passing data between observers. Accessed from the observer implementation, do not modify directly."""
 
         self.connection_observer = _TransactionQueryObserver(self)
+        """Observer bound to connection, to pass callbacks to transaction observers."""
+
         self.connection.attach(self.connection_observer)
 
     async def __aenter__(self) -> Self:

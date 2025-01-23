@@ -19,8 +19,18 @@ class Result(AsyncResultBase):
     """
 
     def __init__(self, transaction: Transaction, cursor: Optional[Cursor], query: str) -> None:
+        """
+        :param transaction: Transaction that produced the query.
+        :param cursor: Underlying cursor for accessing the result set.
+        :param query: Query that produced the result.
+        """
+
         self.transaction = transaction
+        """Transaction that produced the query."""
+
         self.cursor = cursor
+        """Underlying cursor for accessing the result set."""
+
         self._closed = False
         self._query = query
 
@@ -61,14 +71,26 @@ class Result(AsyncResultBase):
         return row
 
     @overload
-    async def fetch_list(self, /) -> Optional[list[Any]]: ...
+    async def fetch_list(self, /) -> Optional[list[Any]]:
+        """
+        Fetch one row from result as `list` (indexed column access).
+        :return: `list` with row data or None if no rows are remaining in the result set.
+        """
 
     @overload
-    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]: ...
+    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]:
+        """
+        Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument.
+        :param cls: List type that should be returned. Defaults to plain list.
+        :param args: Optional arguments to the cls constructor.
+        :param kwargs: Optional kwargs to the cls constructor.
+        :return: Instance of cls created from result row or None if no rows are remaining in the result set.
+        """
 
     async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
         """
-        Fetch one row from result as list. The list type can be specified as the cls argument.
+        Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument,
+        defaults to `list`.
         :param cls: List type that should be returned. Defaults to plain list.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs to the cls constructor.
@@ -104,7 +126,8 @@ class Result(AsyncResultBase):
         self, cls: Type[DictT | dict[str, Any]] = dict, /, *args: Any, **kwargs: Any
     ) -> Optional[DictT | dict[str, Any]]:
         """
-        Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+        Fetch one row from result as dictionary (mapping). The dictionary type can be specified as the cls argument. Defaults
+        to `dict`.
         :param cls: Dictionary type that should be returned. Defaults to plain dict.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -143,9 +166,9 @@ class Result(AsyncResultBase):
         self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = True, **kwargs: Any
     ) -> Optional[OBJ | ResultRow]:
         """
-        Fetch one row from result as object of type specified by the cls argument.
+        Fetch one row from result as object of type specified by the cls argument. Defaults to generic `ResultRow` object.
         :param cls: Class (or factory) representing the object that should be returned.
-        :param args: Arguments to the cls constructor.
+        :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
           will be set directly using setattr().
         :param kwargs: Optional kwargs for the constructor.
@@ -191,7 +214,8 @@ class Result(AsyncResultBase):
 
     async def fetch_all_scalar(self, factory: Type[ListT | SetT | list[Any]] = list) -> ListT | SetT | list[Any]:
         """
-        Fetch all rows from result as a list of scalars. Only for queries returning single column.
+        Fetch all rows from the result set as scalars.
+        :param factory: Factory to use for the output type. Can be MutableSet or MutableSequence. Defaults to `list`.
         """
         if len(self.description) != 1:
             raise LogicError(self._query, "Query returned more than one column.", remote_app=self.remote_app)
@@ -216,6 +240,9 @@ class Result(AsyncResultBase):
         return self.transaction.remote_app
 
     def __bool__(self) -> bool:
+        """
+        Returns True if the query contains any rows.
+        """
         return True
 
 

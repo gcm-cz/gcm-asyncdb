@@ -5,6 +5,9 @@ relational databases.
 
 Currently, only MySQL (aiomysql) is supported, but support for other databases should be easy to implement, when required.
 
+## Documentation
+
+API documentation is available at https://gcm-asyncdb.gcm-cz.gitlab.io/
 
 ## Installation
 
