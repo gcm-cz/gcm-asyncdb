@@ -48,7 +48,7 @@ build-wheel:
       - dist/*
 
 build-docs:
-  image: harbor.srv.gcm.cz/ci/baseimage/python:3.11
+  image: harbor.srv.gcm.cz/baseimage/python:3.11
   stage: build
   pages: true
   script:
