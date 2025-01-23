@@ -27,6 +27,7 @@ classifiers = [
 Homepage = "https://gitlab.com/gcm-cz/gcm-asyncdb"
 Repository = "https://gitlab.com/gcm-cz/gcm-asyncdb"
 Issues = "https://gitlab.com/gcm-cz/gcm-asyncdb/-/issues"
+Documentation = "https://asyncdb.gcm.cz/"
 
 [tool.poetry.dependencies]
 python = "^3.11"
