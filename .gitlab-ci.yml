@@ -54,6 +54,9 @@ build-docs:
   script:
     - poetry install --with=dev
     - poetry run pdoc -o ./public asyncdb
+  artifacts:
+    paths:
+      - public
 
 release-wheel:
   image: harbor.srv.gcm.cz/ci/baseimage/python:3.11-ci
