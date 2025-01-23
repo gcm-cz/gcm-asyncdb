@@ -150,6 +150,117 @@ for all other loggers. The loggers are:
 - `db.mysql.<database>` - logger for specific database, useful when application works with various databases to identify
     the source of the log message.
 
+## Examples
+
+### Load objects from database
+
+To fetch rows from database, use `Result.fetch_all_object()`.
+
+```python
+trx: Transaction = ...
+res = await trx.query("SELECT id, name, price FROM products")
+
+async for row in res.fetch_all_object():
+    print(f"ID: {row.id}, name: {row.name}, price: {row.price}")
+```
+
+When you want just one object, you can use `Transaction.get_object()`.
+
+```python
+trx: Transaction
+row = await trx.get_boject("SELECT id, name, price FROM products WHERE id = %s", [1])
+print(f"Product ID {row.id}: {row.name}")
+```
+
+### Load dictionaries from database
+
+```python
+trx: Transaction = ...
+res = await trx.query("SELECT id, name, price FROM products")
+
+async for row in res.fetch_all_dict():
+    print(f"ID: {row['id']}, name: {row['name']}, price: {row['price']}")
+```
+
+You can also retrieve one object from the database
+
+```python
+trx: Transaction = ...
+row = await trx.get_dict("SELECT id, name, price FROM products WHERE id = %s", [1])
+print(f"Product ID {row['id']}: {row['name']}
+```
+
+### Load lists from database
+
+```python
+trx: Transaction = ...
+res = await trx.query("SELECT COUNT(*), SUM(price) FROM products")
+
+async for row in res.fetch_all_list():
+    print(f"Number of products: {row[0]}, total price: {row[1]}")
+```
+
+Also, single-row version also works:
+
+```python
+trx: Transaction = ...
+row = await trx.get_list("SELECT COUNT(*), SUM(price) FROM products")
+print(f"Number of products: {row[0]}, total price: {row[1]}")
+```
+
+### Simply load set of existing IDs
+
+```python
+trx: Transaction = ...
+res = await trx.query("SELECT id FROM products")
+
+# You can specify factory function as the argument to the
+# `Transaction.fetch_all_scalar()` to provide custom container
+# for the result set.
+ids = await res.fetch_all_scalar(set)
+
+print(ids)  # set(1,2,3)
+
+```
+
+### Load single value from database
+
+```python
+trx: Transaction = ...
+count = await trx.get_scalar("SELECT COUNT(*) FROM products")
+print(f"Number of products: {count}")
+```
+
+### Modify data
+
+```python
+trx: Transaction = ...
+await trx.query("INSERT INTO products (name, price) VALUES (%s, %s)", "Product 1", 100)
+print(f"ID of inserted entry: {await trx.last_insert_id()}")
+```
+
+```python
+trx: Transaction = ...
+await trx.query("UPDATE products SET price = price * 1.1 WHERE price < %s", 100)
+print(f"Number of updated entries: {await trx.affected_rows()}")
+```
+
+### Modify transaction isolation level
+
+To set transaction isolation level for the transaction, you can either specify
+
+```python
+# Default isolation level for transactions.
+db = TransactionFactory(isolation_level=TransactionIsolationLevel.REPEATABLE_READ)
+
+# Explicit isolation level for the transaction.
+async with db.transaction(TransactionIsolationLevel.READ_COMMITTED) as trx:
+    await trx.get_scalar("SELECT COUNT(*) FROM products")  # 0
+    await trx.query("INSERT INTO products (name, price) VALUES (%s, %s)", "Product 1", 100)
+    await trx.get_scalar("SELECT COUNT(*) FROM products")  # 1
+    await trx.commit()
+```
+
 """
 
 from logging import getLogger
