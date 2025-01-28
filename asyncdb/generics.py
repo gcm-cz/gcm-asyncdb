@@ -11,6 +11,7 @@ SET = MutableSet[Any]
 FETCH = TypeVar("FETCH")
 OBJ_OR_FACTORY = Type[OBJ] | Callable[..., OBJ]
 
+ArgsT = TypeVar("ArgsT", bound=tuple)
 DictT = TypeVar("DictT", bound=DICT)
 ListT = TypeVar("ListT", bound=LST)
 SetT = TypeVar("SetT", bound=SET)
@@ -28,11 +29,7 @@ class ResultRow:
         return self.__dict__.get(item)
 
     def __setattr__(self, item: str, value: Any) -> None:
-        if item in self.__dict__:
-            self.__dict__[item] = value
-
-        else:
-            raise AttributeError(f"Attribute {item!r} not found in {self!r}")
+        self.__dict__[item] = value
 
     def __repr__(self) -> str:
         items = ", ".join([f"{key}={val!r}" for key, val in self.__dict__.items()])

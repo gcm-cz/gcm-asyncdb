@@ -6,6 +6,14 @@ stages:
 test:
   image: harbor.srv.gcm.cz/baseimage/python:3.11
   stage: test
+  services:
+    - name: mariadb:10.11
+      alias: asyncdb-test-mysql
+      variables:
+        MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+        MARIADB_DATABASE: "test"
+  variables:
+    TEST_MYSQL_HOST: "asyncdb-test-mysql"
   script:
     - poetry install --no-root
     - poetry run pytest

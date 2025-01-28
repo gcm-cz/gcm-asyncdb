@@ -1,21 +1,54 @@
+import logging
+import os
 import warnings
-
-from .mock import MockConnectionWrapper  # MUST BE BEFORE asyncdb IMPORTS!!!
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
 
 from asyncdb.aiomysql.result import BoolResult
 
 import pytest
-from pymysql import ProgrammingError
-from pymysql.constants import ER
 
-from asyncdb import LogicError
-from asyncdb.aiomysql import AioMySQLConnection, Transaction
-from asyncdb.exceptions import ImplicitRollback, SyntaxError
+from asyncdb import LogicError, ResultRow
+from asyncdb.aiomysql import AioMySQLConnection, Transaction, QueryObserver
+from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError
+
+
+class TestQueryObserver(QueryObserver):
+    def observe_query_before(self, conn: 'CustomAioMySQLConnection', query: str, **kwargs: Any) -> Any:
+        conn.QUERIES_EXECUTED.append(query)
+        return query
+
+
+class CustomAioMySQLConnection(AioMySQLConnection):
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.QUERIES_EXECUTED = []
+        self.attach(TestQueryObserver())
+
+    async def _connect(self):
+        await super()._connect()
+        self.QUERIES_EXECUTED = []
 
 
 @pytest.fixture
 def connection():
-    return AioMySQLConnection()
+    return CustomAioMySQLConnection(
+        host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+        port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+        user="root",
+        db="test",
+    )
+
+@pytest.fixture
+def connection_naive_dt():
+    return CustomAioMySQLConnection(
+        host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+        port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+        user="root",
+        db="test",
+        timezone=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -27,6 +60,9 @@ async def test_simple_query(connection):
                 assert isinstance(row, dict)
                 assert row["1"] == 1
 
+    logging.warning(connection.QUERIES_EXECUTED)
+
+    # Query has been implicitly rolled back, so there is ROLLBACK and no COMMIT in the executed queries.
     assert "ROLLBACK" in connection.QUERIES_EXECUTED
     assert "COMMIT" not in connection.QUERIES_EXECUTED
 
@@ -69,8 +105,6 @@ async def test_operation_after_commit(connection):
 async def test_errors(connection):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
-            connection.QUERIES["SYNTAX ERROR"] = ProgrammingError(ER.SYNTAX_ERROR, "Mocked syntax error")
-
             q = await transaction.query("SELECT 1")
 
             with pytest.raises(LogicError):
@@ -78,7 +112,7 @@ async def test_errors(connection):
 
             await q.close()
 
-            with pytest.raises(SyntaxError):
+            with pytest.raises(ParseError):
                 await transaction.query("SYNTAX ERROR")
 
 
@@ -89,3 +123,276 @@ async def test_bool_result(connection):
             q = await transaction.query("COMMIT")
             assert isinstance(q, BoolResult)
             assert bool(q) is True
+
+@pytest.mark.asyncio
+async def test_naive_datetime(connection_naive_dt):
+    async with Transaction(connection_naive_dt) as transaction:
+        dt: datetime = await transaction.get_scalar("SELECT CAST('2021-01-03 13:15:16' AS DATETIME)")
+        assert dt.year == 2021
+        assert dt.month == 1
+        assert dt.day == 3
+        assert dt.hour == 13
+        assert dt.minute == 15
+        assert dt.second == 16
+        assert dt.tzinfo is None
+
+@pytest.mark.asyncio
+async def test_aware_datetime(connection):
+    async with Transaction(connection) as transaction:
+        dt: datetime = await transaction.get_scalar("SELECT CAST('2021-01-03 13:15:16' AS DATETIME)")
+        assert dt.year == 2021
+        assert dt.month == 1
+        assert dt.day == 3
+        assert dt.hour == 13
+        assert dt.minute == 15
+        assert dt.second == 16
+        assert dt.tzinfo is timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_logging_correct(connection, caplog):
+    async with Transaction(connection) as transaction:
+        caplog.clear()
+
+        q = await transaction.query("SELECT 1")
+        await q.close()
+        await transaction.commit()
+
+    # Ensure all log records are logged from this test file, and not from the library code.
+    for row in caplog.records:
+        assert row.filename == "test_connection.py"
+
+
+@pytest.mark.asyncio
+async def test_fetching_dict(connection):
+    rows: list[dict[str, Any]] = []
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row in q.fetch_all_dict():
+            assert isinstance(row, dict)
+            rows.append(row)
+
+        await trx.commit()
+
+    assert rows == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+
+class customdict(dict):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_fetching_dict_custom(connection):
+    rows: list[dict[str, Any]] = []
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row in q.fetch_all_dict(customdict):
+            assert isinstance(row, customdict)
+            rows.append(row)
+
+        await trx.commit()
+
+    assert rows == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+
+@pytest.mark.asyncio
+async def test_fetch_list(connection):
+    rows: list[list[Any]] = []
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row in q.fetch_all_list():
+            assert isinstance(row, list)
+            rows.append(row)
+
+        await trx.commit()
+
+    assert rows == [[1], [2], [3]]
+
+
+class customlist(list):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_fetch_list_custom(connection):
+    rows: list[list[Any]] = []
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row in q.fetch_all_list(customlist):
+            assert isinstance(row, customlist)
+            rows.append(row)
+
+        await trx.commit()
+
+    assert rows == [[1], [2], [3]]
+
+
+@pytest.mark.asyncio
+async def test_fetch_object(connection):
+    rows: list[ResultRow] = []
+
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row in q.fetch_all_object():
+            assert isinstance(row, ResultRow)
+            rows.append(row)
+
+        await trx.commit()
+
+    assert rows[0].a == 1
+    assert rows[1].a == 2
+    assert rows[2].a == 3
+
+
+@dataclass
+class customobject:
+    a: int
+
+
+@pytest.mark.asyncio
+async def test_fetch_custom_object(connection):
+    rows: list[customobject] = []
+
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row in q.fetch_all_object(customobject, as_kwargs=True):
+            assert isinstance(row, customobject)
+            rows.append(row)
+
+        await trx.commit()
+
+    assert rows[0].a == 1
+    assert rows[1].a == 2
+    assert rows[2].a == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_scalar(connection):
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION SELECT 2 AS 'a' UNION SELECT 3 AS 'a'")
+        assert await q.fetch_all_scalar() == [1, 2, 3]
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_fetch_scalar_multiple_columns(connection):
+    async with Transaction(connection) as trx:
+        with pytest.raises(LogicError):
+            await trx.get_scalar("SELECT 'a', 'b', 'c'")
+
+        q = await trx.query("SELECT 'a', 'b', 'c'")
+        with pytest.raises(LogicError):
+            await q.fetch_all_scalar()
+
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_last_insert_id_affected_rows(connection):
+    async with Transaction(connection) as trx:
+        await trx.query("CREATE TEMPORARY TABLE test (id INT AUTO_INCREMENT PRIMARY KEY, a INT)")
+        await trx.query("INSERT INTO test (a) VALUES (1)")
+        assert await trx.last_insert_id() == 1
+
+        await trx.query("INSERT INTO test (a) VALUES (2), (3)")
+
+        await trx.query("UPDATE test SET a = 4")
+        assert await trx.affected_rows() == 3
+
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_dbapi_2_compatibility(connection):
+    async with Transaction(connection) as trx:
+        with pytest.warns(DeprecationWarning):
+            await trx.execute("SELECT 1")
+            assert await trx.fetchone() == {"1": 1}
+            await trx.cleanup()
+
+            await trx.execute("SELECT 1")
+            assert await trx.fetchone() == {"1": 1}
+            assert await trx.fetchone() == None
+
+            await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
+            assert await trx.fetchall() == [{"a": 1}, {"a": 2}]
+
+            await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
+            assert await trx.fetchmany(1) == [{"a": 1}]
+            assert await trx.fetchmany(1) == [{"a": 2}]
+            assert await trx.fetchmany(1) == []
+
+            await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
+            (await trx.cursor).arraysize = 1000
+            assert await trx.fetchmany() == [{"a": 1}, {"a": 2}]
+
+
+
+@pytest.mark.asyncio
+async def test_dbapi_2_executemany(connection):
+    async with Transaction(connection) as trx:
+        await trx.execute("CREATE TEMPORARY TABLE test (a INT)")
+        await trx.executemany("INSERT INTO test (a) VALUES (%s)", [(1,), (2,), (3,)])
+        await trx.execute("SELECT * FROM test")
+        await trx.fetchall() == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_dbapi_2_no_result(connection):
+    async with Transaction(connection) as trx:
+        await trx.execute("CREATE TEMPORARY TABLE test (a INT)")
+        with pytest.raises(LogicError):
+            await trx.fetchone()
+
+        with pytest.raises(LogicError):
+            await trx.fetchall()
+
+        with pytest.raises(LogicError):
+            await trx.fetchmany(1)
+
+        with pytest.raises(LogicError):
+            await trx.scroll(0)
+
+
+@pytest.mark.asyncio
+async def test_dbapi_2_scroll(connection):
+    async with Transaction(connection) as trx:
+        await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a` UNION SELECT 3 AS `a`")
+        assert await trx.fetchone() == {"a": 1}
+        assert await trx.fetchone() == {"a": 2}
+        await trx.scroll(0, "absolute")
+        assert await trx.fetchone() == {"a": 1}
+
+        await trx.scroll(1, "absolute")
+        assert await trx.fetchone() == {"a": 2}
+
+        await trx.scroll(-1, "relative")
+        assert await trx.fetchone() == {"a": 2}
+
+        await trx.scroll(-2, "relative")
+        assert await trx.fetchone() == {"a": 1}
+
+        await trx.scroll(0, "relative")
+        assert await trx.fetchone() == {"a": 2}
+
+        await trx.scroll(0, "relative")
+        assert await trx.fetchone() == {"a": 3}
+
+        await trx.scroll(-3, "relative")
+        assert await trx.fetchone() == {"a": 1}
+
+        await trx.scroll(1, "relative")
+        assert await trx.fetchone() == {"a": 3}
+
+        await trx.scroll(-3, "relative")
+        assert await trx.fetchone() == {"a": 1}
+
+        with pytest.raises(IndexError):
+            await trx.scroll(-4)
+
+        with pytest.raises(ScrollIndexError):
+            await trx.scroll(3)
+
+        await trx.commit()

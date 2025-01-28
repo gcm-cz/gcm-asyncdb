@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from enum import Enum
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Optional, Self, Type, cast
+from typing import TYPE_CHECKING, Any, Optional, Self, Type, cast, Literal
+from typing_extensions import deprecated
 
 from .._sl import _SL
 from ..asyncdb import Transaction as AsyncTransactionBase
@@ -11,9 +12,10 @@ from .cursor import Cursor
 from .error import _query_error_factory
 from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
 from .result import BoolResult, Result
+from ..generics import ArgsT
 
 if TYPE_CHECKING:
-    from .connection import AioMySQLConnection
+    from .connection import AioMySQLConnection  # pragma: no cover
 
 
 class TransactionIsolationLevel(str, Enum):
@@ -95,6 +97,9 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         if self._transaction_initiated:
             raise LogicError("", "Transaction has already been started.", remote_app=self.remote_app)
 
+        if not hasattr(self.connection, "connected_time"):
+            await self.connection._connect()  # pylint: disable=protected-access
+
         self._transaction_initiated = True
 
         if self._isolation_level is not None:
@@ -119,12 +124,12 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
     async def last_insert_id(self) -> int:
         """Get last inserted ID for autoincrement column."""
         await self._check_transaction_open("")
-        return cast(int, (await self.cursor).lastrowid)
+        return cast(int, (await self._get_cursor()).lastrowid)
 
     async def affected_rows(self) -> int:
         """Get number of affected rows by the last query."""
         await self._check_transaction_open("")
-        return (await self.cursor).rowcount
+        return (await self._get_cursor()).rowcount
 
     async def commit(self) -> None:
         """Commit transaction"""
@@ -204,10 +209,14 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         return self._connection
 
     @property
+    @deprecated("Do not access cursor directly, use Transaction.query() instead.")
     async def cursor(self) -> Cursor:
         """
         Get cursor for executing queries. Should not be needed, one should use query() method instead.
         """
+        return await self._get_cursor()
+
+    async def _get_cursor(self) -> Cursor:
         if not self._cursor:
             self._cursor = cast(Cursor, await self._connection.cursor())
 
@@ -256,7 +265,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
             if kwargs:
                 raise LogicError(query, "aiomysql does not support kwargs in query.", remote_app=self.remote_app)
 
-            cursor = await self.cursor
+            cursor = await self._get_cursor()
 
             try:
                 await cursor.execute(query, args)
@@ -270,6 +279,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
                 self._last_result = Result(self, cursor, f"{query} with args {args}" if args else query)
                 return self._last_result
 
+            self._last_result = None
             return BoolResult(self, True, f"{query} with args {args}" if args else query)
 
     @property
@@ -278,3 +288,162 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         Remote app associated with the transaction to enhance error messages.
         """
         return self.connection.remote_app
+
+    ## DB-API 2.0 compatibility methods follows. They are deprecated and should not be used. ##
+
+    @deprecated("Use Transaction.query() instead.")
+    async def execute(self, query: str, args: Optional[tuple[Any, ...]] = None) -> int | None:
+        """
+        Execute single query inside the transaction scope.
+
+        Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it.
+        Use `Transaction.query()` instead, which returns result.
+
+        :param query: Query to execute. Can contain %s for each arg from args.
+        :param args: Arguments to the query
+        :return: Number of affected rows.
+        :raises: QueryError (or subclass of) if there was an error processing the query.
+        """
+        if args:
+            await self.query(query, *args)
+        else:
+            await self.query(query)
+
+        return await self.affected_rows()
+
+    @deprecated("Use Transaction.query() instead.")
+    async def executemany(self, query: str, args: list[tuple[Any, ...]]) -> int | None:
+        """
+        Execute query with multiple set of arguments.
+
+        Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it.
+        Use `Transaction.query()` instead, which returns result.
+
+        :param query: Query to execute. Can contain %s for each arg from args.
+        :param args: List of tuples with arguments. Each item in the list is one set of arguments and will be executed as
+          separate query.
+        :return: Number of affected rows by all queries
+        """
+        affected_rows = 0
+
+        for arg in args:
+            await self.query(query, *arg)
+            affected_rows += await self.affected_rows()
+
+        return affected_rows
+
+    @deprecated("This is not needed in asyncdb, next set is advanced automatically.")
+    async def nextset(self) -> None:
+        """
+        Advance to next result set. This is just for compatibility with DB-API 2.0, but it is not needed in asyncdb, as next set
+        is advanced automatically.
+        """
+
+    @deprecated("Use Transaction.query() instead.")
+    async def callproc(self, procname: str, args: Optional[ArgsT] = None) -> Optional[ArgsT]:
+        """
+        Call stored procedure with arguments.
+
+        Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it.
+        Use `Transaction.query()` instead, which returns result.
+
+        :param procname: Stored procedure to call.
+        :param args: Tuple of arguments for the procedure.
+        :return: Original arguments.
+        """
+        if args:
+            await self.query(f"CALL {procname}({', '.join(['%s'] * len(args))})", args)
+        else:
+            await self.query(f"CALL {procname}")
+
+        return args
+
+    @deprecated("Use Result.fetch_dict() instead.")
+    async def fetchone(self) -> Optional[dict[str, Any]]:
+        """
+        Fetch one row from the last query result.
+
+        Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it. Use methods on the
+        `Result` object instead (`Result.fetch_dict()`).
+
+        :return: One row from the result as dictionary. None if there are no more rows.
+        """
+        if not self._last_result:
+            raise LogicError(
+                "",
+                "Last query did not produce result. Unable to fetch rows.",
+                remote_app=self.remote_app
+            )
+
+        return await self._last_result.fetch_dict()
+
+    @deprecated("Use Result.fetch_all_dict() instead.")
+    async def fetchmany(self, size: Optional[int] = None) -> list[dict[str, Any]]:
+        """
+        Fetch multiple rows from the last query result.
+
+        Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it. Use methods on the
+        `Result` object instead (`Result.fetch_all_dict()`.
+
+        :param size: Number of rows to fetch. If None, fetch all rows.
+        :return: List of rows from the result as list of dictionaries.
+        """
+        if not self._last_result:
+            raise LogicError(
+                "",
+                "Last query did not produce result. Unable to fetch rows.",
+                remote_app=self.remote_app
+            )
+
+        out: list[dict[str, Any]] = []
+
+        if size is None:
+            if self._last_result.cursor:
+                size = self._last_result.cursor.arraysize
+            else:
+                size = 1000
+
+        while size > 0:
+            row = await self._last_result.fetch_dict()
+            if row is None:
+                break
+
+            out.append(row)
+            size -= 1
+
+        return out
+
+    @deprecated("Use Result.fetch_all_dict() instead.")
+    async def fetchall(self) -> list[dict[str, Any]]:
+        """
+        Fetch all rows from the last query result.
+
+        Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it. Use methods on the
+        `Result` object instead (`Result.fetch_all_dict()`.
+
+        :return: All rows from the result as list of dictionaries.
+        """
+        if not self._last_result:
+            raise LogicError(
+                "",
+                "Last query did not produce result. Unable to fetch rows.",
+                remote_app=self.remote_app
+            )
+
+        return [row async for row in self._last_result.fetch_all_dict()]
+
+    @deprecated("Use Result.scroll() instead.")
+    async def scroll(self, value: int, mode: Literal["relative", "absolute"] = "relative") -> None:
+        """
+        Scroll the position of the cursor in the result set.
+        :param value: Amount of rows to advance if `mode = "absolute"` or offset from current position if `mode = "relative"`.
+        :param mode: `absolute` or `relative` determining how the result set will be scrolled.
+        """
+        if not self._last_result:
+            raise LogicError(
+                "",
+                "Last query did not produce result. Unable to scroll.",
+                remote_app=self.remote_app
+            )
+
+        await self._last_result.scroll(value, mode)

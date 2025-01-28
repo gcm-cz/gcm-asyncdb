@@ -148,3 +148,8 @@ class UnableToCreateConnection(RuntimeError):
     Exception thrown when connection cannot be created. It might be caused by connection failing to establish or
     initial check after establishing the connection fails.
     """
+
+class ScrollIndexError(QueryError, IndexError):
+    """
+    Index error while seeking.
+    """

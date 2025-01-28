@@ -7,7 +7,7 @@ import aiomysql
 from .._sl import _SL
 
 if TYPE_CHECKING:
-    from .connection import AioMySQLConnection
+    from .connection import AioMySQLConnection  # pragma: no cover
 
 
 class Cursor(aiomysql.Cursor):

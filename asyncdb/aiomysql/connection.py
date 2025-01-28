@@ -98,7 +98,7 @@ class AioMySQLConnection(aiomysql.Connection):
                     hours = offset.seconds // 3600
                     minutes = (offset.seconds // 60) % 60
 
-                    init_command = f"SET time_zone='{hours:+03d}:{minutes:02d}'; {init_command}"
+                    init_command = f"SET time_zone='{hours:+03d}:{minutes:02d}'; {init_command or ''}"
 
         super().__init__(
             host,

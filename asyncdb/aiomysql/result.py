@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from copy import copy
-from typing import TYPE_CHECKING, Any, Optional, Type, overload
+from typing import TYPE_CHECKING, Any, Optional, Type, overload, Literal
 
 from ..asyncdb import BoolResult as BoolResultBase
 from ..asyncdb import Result as AsyncResultBase
-from ..exceptions import LogicError
+from ..exceptions import LogicError, ScrollIndexError
 from ..generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
 from .cursor import Cursor
 
 if TYPE_CHECKING:
-    from .transaction import Transaction
+    from .transaction import Transaction  # pylint: disable=cyclic-import  # pragma: no cover
 
 
 class Result(AsyncResultBase):
@@ -69,6 +69,26 @@ class Result(AsyncResultBase):
             return None
 
         return row
+
+    async def scroll(self, value: int, mode: Literal["absolute", "relative"]) -> None:
+        """
+        Scroll the result set to a new position.
+        :param value:
+            - For `mode = "relative"`: Number of rows to scroll. Positive value scrolls forward, negative value scrolls backward.
+            - For `mode = "absolute"`: Absolute position to scroll to, 0-indexed.
+        :param mode: Scroll mode. Can be 'absolute' or 'relative'.
+        """
+        if not self.cursor:
+            return
+
+        try:
+            await self.cursor.scroll(value, mode)
+        except IndexError as exc:
+            raise ScrollIndexError(
+                "",
+                str(exc),
+                remote_app=self.remote_app,
+            ) from exc
 
     @overload
     async def fetch_list(self, /) -> Optional[list[Any]]:
