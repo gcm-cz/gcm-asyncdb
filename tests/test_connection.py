@@ -5,17 +5,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from asyncdb.aiomysql.result import BoolResult
-
 import pytest
 
 from asyncdb import LogicError, ResultRow
-from asyncdb.aiomysql import AioMySQLConnection, Transaction, QueryObserver
+from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction
+from asyncdb.aiomysql.result import BoolResult
 from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError
 
 
 class TestQueryObserver(QueryObserver):
-    def observe_query_before(self, conn: 'CustomAioMySQLConnection', query: str, **kwargs: Any) -> Any:
+    def observe_query_before(self, conn: "CustomAioMySQLConnection", query: str, **kwargs: Any) -> Any:
         conn.QUERIES_EXECUTED.append(query)
         return query
 
@@ -39,6 +38,7 @@ def connection():
         user="root",
         db="test",
     )
+
 
 @pytest.fixture
 def connection_naive_dt():
@@ -124,6 +124,7 @@ async def test_bool_result(connection):
             assert isinstance(q, BoolResult)
             assert bool(q) is True
 
+
 @pytest.mark.asyncio
 async def test_naive_datetime(connection_naive_dt):
     async with Transaction(connection_naive_dt) as transaction:
@@ -135,6 +136,7 @@ async def test_naive_datetime(connection_naive_dt):
         assert dt.minute == 15
         assert dt.second == 16
         assert dt.tzinfo is None
+
 
 @pytest.mark.asyncio
 async def test_aware_datetime(connection):
@@ -325,7 +327,6 @@ async def test_dbapi_2_compatibility(connection):
             await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
             (await trx.cursor).arraysize = 1000
             assert await trx.fetchmany() == [{"a": 1}, {"a": 2}]
-
 
 
 @pytest.mark.asyncio

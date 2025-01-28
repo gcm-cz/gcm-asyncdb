@@ -11,7 +11,7 @@ SET = MutableSet[Any]
 FETCH = TypeVar("FETCH")
 OBJ_OR_FACTORY = Type[OBJ] | Callable[..., OBJ]
 
-ArgsT = TypeVar("ArgsT", bound=tuple)
+ArgsT = TypeVar("ArgsT", bound=tuple[Any, ...])
 DictT = TypeVar("DictT", bound=DICT)
 ListT = TypeVar("ListT", bound=LST)
 SetT = TypeVar("SetT", bound=SET)

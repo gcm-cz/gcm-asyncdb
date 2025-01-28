@@ -149,6 +149,7 @@ class UnableToCreateConnection(RuntimeError):
     initial check after establishing the connection fails.
     """
 
+
 class ScrollIndexError(QueryError, IndexError):
     """
     Index error while seeking.

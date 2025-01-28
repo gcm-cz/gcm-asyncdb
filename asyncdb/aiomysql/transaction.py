@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from enum import Enum
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Optional, Self, Type, cast, Literal
+from typing import TYPE_CHECKING, Any, Literal, Optional, Self, Type, cast
+
 from typing_extensions import deprecated
 
 from .._sl import _SL
 from ..asyncdb import Transaction as AsyncTransactionBase
 from ..exceptions import LogicError
+from ..generics import ArgsT
 from .cursor import Cursor
 from .error import _query_error_factory
 from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
 from .result import BoolResult, Result
-from ..generics import ArgsT
 
 if TYPE_CHECKING:
     from .connection import AioMySQLConnection  # pragma: no cover
@@ -27,7 +28,8 @@ class TransactionIsolationLevel(str, Enum):
     SERIALIZABLE = "SERIALIZABLE"
 
 
-class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disable=too-many-instance-attributes
+class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
+    # pylint: disable=too-many-instance-attributes, too-many-public-methods
     """
     Single database transaction.
     """
@@ -369,11 +371,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         :return: One row from the result as dictionary. None if there are no more rows.
         """
         if not self._last_result:
-            raise LogicError(
-                "",
-                "Last query did not produce result. Unable to fetch rows.",
-                remote_app=self.remote_app
-            )
+            raise LogicError("", "Last query did not produce result. Unable to fetch rows.", remote_app=self.remote_app)
 
         return await self._last_result.fetch_dict()
 
@@ -389,11 +387,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         :return: List of rows from the result as list of dictionaries.
         """
         if not self._last_result:
-            raise LogicError(
-                "",
-                "Last query did not produce result. Unable to fetch rows.",
-                remote_app=self.remote_app
-            )
+            raise LogicError("", "Last query did not produce result. Unable to fetch rows.", remote_app=self.remote_app)
 
         out: list[dict[str, Any]] = []
 
@@ -424,11 +418,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         :return: All rows from the result as list of dictionaries.
         """
         if not self._last_result:
-            raise LogicError(
-                "",
-                "Last query did not produce result. Unable to fetch rows.",
-                remote_app=self.remote_app
-            )
+            raise LogicError("", "Last query did not produce result. Unable to fetch rows.", remote_app=self.remote_app)
 
         return [row async for row in self._last_result.fetch_all_dict()]
 
@@ -440,10 +430,6 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):  # pylint: disabl
         :param mode: `absolute` or `relative` determining how the result set will be scrolled.
         """
         if not self._last_result:
-            raise LogicError(
-                "",
-                "Last query did not produce result. Unable to scroll.",
-                remote_app=self.remote_app
-            )
+            raise LogicError("", "Last query did not produce result. Unable to scroll.", remote_app=self.remote_app)
 
         await self._last_result.scroll(value, mode)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import copy
-from typing import TYPE_CHECKING, Any, Optional, Type, overload, Literal
+from typing import TYPE_CHECKING, Any, Literal, Optional, Type, overload
 
 from ..asyncdb import BoolResult as BoolResultBase
 from ..asyncdb import Result as AsyncResultBase
