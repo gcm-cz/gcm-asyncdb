@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 class Result(AsyncResultBase):
     """
     Result of query. Obtained automatically as result of `Transaction.query()` method. You should not need to create it manually.
+    When query returns result set, instance of `Result` is retned. If query does not return any result set, instance of
+    `BoolResult` is returned.
 
     This is the main difference from DB-API 2.0. You use `Result` object to access rows from a query. You can fetch rows
     as lists, dictionaries, objects, or scalars. You can also scroll the result set to a new position. The result set is
@@ -576,7 +578,22 @@ class Result(AsyncResultBase):
 
 class BoolResult(BoolResultBase, Result):
     """
-    Returns boolean result of the query.
+    Result of query that does not return any result set, just success of the operation. On this result, you cannot
+    perform any fetch operations, just compare it to bool.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb import Transaction, BoolResult
+    >>>
+    >>> trx: Transaction = ...
+    >>>
+    >>> async def main():
+    >>>     res = await trx.query("INSERT INTO `products` (`name`) VALUES ('Product 1')")
+    >>>     print(type(res))
+    >>>     # <class 'BoolResult'>
+    >>>     print(bool(res))
+    >>>     # True
     """
 
     def __init__(self, transaction: Transaction, bool_result: bool, query: str) -> None:

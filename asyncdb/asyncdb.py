@@ -34,7 +34,11 @@ from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResObj
 
 class Result(ABC):
     """
-    Abstract base class representing result of query.
+    Abstract base class representing result of a query. The `Result` is returned after performing a query on the transaction
+    using the `Transaction.query()` method. If the query returns result set, the `Result` instance is returned, otherwise
+    `BoolResult` is returned.
+
+    You should not need to instantiate this class manually, it is returned by the transaction's `Transaction.query()` method.
 
     Example:
 
@@ -779,10 +783,27 @@ class BoolResult(Result, ABC):
     """
     Result of query that does not return any result set, just success of the operation. On this result, you cannot
     perform any fetch operations, just compare it to bool.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb import Transaction, BoolResult
+    >>>
+    >>> trx: Transaction = ...
+    >>>
+    >>> async def main():
+    >>>     res = await trx.query("INSERT INTO `products` (`name`) VALUES ('Product 1')")
+    >>>     print(type(res))
+    >>>     # <class 'BoolResult'>
+    >>>     print(bool(res))
+    >>>     # True
     """
 
     def __init__(self, *args: Any, bool_result: bool, **kwargs: Any) -> None:
         """
+        The `BoolResult` is created as a response to calling `Transaction.query()` automatically for queries that does not
+        return result set. You should not need to instantiate it manually.
+
         :param args: Arguments passed to the super class constructor.
         :param bool_result: Actual bool result of the query.
         :param kwargs: Keyword arguments passed to the super class constructor.
@@ -840,6 +861,33 @@ class BoolResult(Result, ABC):
 class Transaction(ABC, Generic[ConnectionTypeT]):
     """
     Abstract base class representing asynchronous transaction interface.
+
+    Transaction is main access port to the database. By design, asyncdb enforces strong transaction usage for accessing the
+    database. This is to ensure that all operations are performed in a transactional context, and to prevent common
+    pitfalls like forgetting to commit the transaction.
+
+    Transaction is a context manager, so it can be used in `async with` statement. This ensures that transaction is
+    always properly committed or rollbacked, even if an exception occurs during the transaction. After the context
+    is left, the transaction is rolled back automatically. If you want to commit it, you must do it manually.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb import Transaction
+    >>>
+    >>> async def main():
+    >>>     async with Transaction(...) as trx:
+    >>>         # Run query on transaction. Query returns `Result` instance, which can be used to access the result set.
+    >>>         await trx.query("SELECT 1")
+    >>>         # Note the missing commit here.
+    >>>     # Warning: ImplicitRollback: Rolling back uncommited transaction.
+    >>>
+    >>>     async with Transaction(...) as trx:
+    >>>         await trx.query("SELECT 1")
+    >>>         await trx.commit()
+    >>>     # No warning here, transaction is commited.
+    >>>
+    >>> asyncio.run(main())
     """
 
     def __init__(self, connection: ConnectionTypeT) -> None:
@@ -895,7 +943,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     @abstractmethod
     async def is_committed(self) -> bool:
         """
-        Return True if transaction has been commited.
+        Return `True` if transaction has been commited. False otherwise.
 
         Example:
 
@@ -914,6 +962,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>             await trx.commit()
         >>>
         >>> asyncio.run(do_some_work())
+
+        :return: True if transaction has been committed, False otherwise (return False since start until committed).
         """
 
     @abstractmethod
@@ -939,7 +989,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     @abstractmethod
     async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
         """
-        Execute single query inside the transaction scope.
+        Execute single query inside the transaction scope, substituting all %s placeholders in the query string with
+        provided arguments in the variadic arguments.
 
         Example:
 
@@ -961,8 +1012,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :param query: Query to execute. Can contain %s for each arg from args.
         :param args: Arguments to the query
         :param kwargs: Some drivers supports also specifying keyword arguments for the query, but most does not.
-        :return: Result if query returns rows, or True if query succeeded.
-        :raises: QueryError (or subclass of) if there was an error processing the query.
+        :return: `Result` if query returns rows, or `BoolResult` if query succeeded but did not return any resultset.
+        :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error processing the query.
         """
 
     @abstractmethod
@@ -1003,7 +1054,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>
         >>> asyncio.run(main())
 
-        :raises: QueryError (or subclass of) if there was an error during commit.
+        :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error during commit.
         """
 
     @abstractmethod
@@ -1024,7 +1075,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>
         >>> asyncio.run(main())
 
-        :raises: QueryError (or subclass of) if there was an error during rollback.
+        :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error during rollback.
         """
 
     async def _get(
@@ -1072,7 +1123,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :param query: Query to be executed
         :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
         :return: Object retrieved by the query.
-        :raise: LogicError when query returns more than one row.
+        :raise: `asyncdb.exceptions.LogicError` when query returns more than one row.
         """
 
     @overload
@@ -1182,7 +1233,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     ) -> OBJ | ResultRow:
         """
         Retrieve single object from the database. The query must return exactly one row, which will be
-        converted to object using standard Result.fetch_object.
+        converted to object using standard `Result.fetch_object()`.
 
         Example:
 
@@ -1238,7 +1289,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     ) -> DictT | dict[str, Any]:
         """
         Retrieve single row from the database as dict. The query must return exactly one row, which will be
-        converted to dict using standard Result.fetch_dict.
+        converted to dict using standard `Result.fetch_dict()`.
 
         Example:
 
@@ -1284,7 +1335,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     ) -> ListT | list[Any]:
         """
         Retrieve single row from the database as list. The query must return exactly one row, which will be
-        converted to list using standard Result.fetch_list.
+        converted to list using standard `Result.fetch_list()`.
 
         Example:
 
@@ -1337,9 +1388,9 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :param query: Query to execute
         :param args: Query arguments.
         :return: Value of first column of the first row of the result set.
-        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
-        :raises: EntityNotFound if query returned a result set, but it was empty.
-        :raises: TooManyRowsError if query returned more than single row or a row contains more than single column.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row or a row contains more than single column.
         """
         row: Sequence[Any] = await self.get_list(query, args)
         if len(row) != 1:
@@ -1365,12 +1416,12 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
 @deprecated("Use Result.fetch_all_object directly.")
 class ObjectFetcher(Generic[ResObjT]):
     """
-    Helper class that acts as generator that fetches objects. The only difference between Result.fetch_all_object is,
+    Helper class that acts as generator that fetches objects. The only difference between `Result.fetch_all_object()` is,
     that this can be type-safe parametrized with actual type of object that it should generate, which helps with
     code completion and mypy checks.
 
-    This should not be needed anymore, but is there for backward compatibility. Currently, fetch_object should be
-    correctly typed for Python 3.11+ to provide correct type hints.
+    This should not be needed anymore, but is there for backward compatibility. Currently, `Result.fetch_object()` should be
+    correctly typed for Python 3.11+ to provide correct type hints even without this helper class.
 
     Example:
 
@@ -1406,12 +1457,13 @@ class ObjectFetcher(Generic[ResObjT]):
         as_kwargs: bool = True,
     ):
         """
-        Construct the ObjectFetcher.
+        Construct the `ObjectFetcher`.
+
         :param q: Query result
-        :param cls: See Result.fetch_object for details.
-        :param cls_args: See Result.fetch_object for details.
-        :param cls_kwargs: See Result.fetch_object for details.
-        :param as_kwargs: See Result.fetch_object for details.
+        :param cls: See `Result.fetch_object()` for details.
+        :param cls_args: See `Result.fetch_object()` for details.
+        :param cls_kwargs: See `Result.fetch_object()` for details.
+        :param as_kwargs: See `Result.fetch_object()` for details.
         """
         self.q: Result = q
         """Result this ObjectFetcher will iterate over."""

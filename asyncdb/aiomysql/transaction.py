@@ -456,7 +456,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
     async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
         """
-        Execute single query inside the transaction scope.
+        Execute single query inside the transaction scope, substituting all %s placeholders in the query string with
+        provided arguments in the variadic arguments.
 
         Example:
 
@@ -477,9 +478,10 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         :param query: Query to execute. Can contain %s for each arg from args.
         :param args: Arguments to the query
-        :param kwargs: Some drivers supports also specifying keyword arguments for the query, but most does not.
-        :return: Result if query returns rows, or True if query succeeded.
-        :raises: QueryError (or subclass of) if there was an error processing the query.
+        :param kwargs: Not supported by underlying aiomysql, will raise an error if used.
+        :return: `Result` instance if query returns any result set, or `BoolResult` if query succeeded but did not return any
+            result set.
+        :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error processing the query.
         """
         with _SL(2):
             await self._check_transaction_open(query)
@@ -532,7 +534,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param query: Query to execute. Can contain %s for each arg from args.
         :param args: Arguments to the query
         :return: Number of affected rows.
-        :raises: QueryError (or subclass of) if there was an error processing the query.
+        :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error processing the query.
         """
         if args:
             await self.query(query, *args)
@@ -553,6 +555,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param args: List of tuples with arguments. Each item in the list is one set of arguments and will be executed as
           separate query.
         :return: Number of affected rows by all queries
+        :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error processing the query.
         """
         affected_rows = 0
 
@@ -609,7 +612,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         Fetch multiple rows from the last query result.
 
         Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it. Use methods on the
-        `Result` object instead (`Result.fetch_all_dict()`.
+        `Result` object instead (`Result.fetch_all_dict()`).
 
         :param size: Number of rows to fetch. If None, fetch all rows.
         :return: List of rows from the result as list of dictionaries.
@@ -641,7 +644,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         Fetch all rows from the last query result.
 
         Deprecated. It is there just for compatibility with DB-API 2.0, but it is not recommended to use it. Use methods on the
-        `Result` object instead (`Result.fetch_all_dict()`.
+        `Result` object instead (`Result.fetch_all_dict()`).
 
         :return: All rows from the result as list of dictionaries.
         """

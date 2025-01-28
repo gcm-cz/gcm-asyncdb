@@ -39,7 +39,7 @@ async def main() -> None:
     # Transaction is the main access port to the database, all operations are done on top of it.
     # For aiomysql, you can even specify transaction isolation level for the transaction. See API docs for more info.
     async with db.transaction() as trx:
-        # Instead of DB-API 2.0 cursor' execute, there is a query() method, which returns Result object, that is then
+        # Instead of DB-API 2.0 cursor's execute, there is a query() method, which returns Result object, that is then
         # used to fetch the results.
         await trx.query('CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))')
         await trx.query('INSERT INTO test (id, name) VALUES (1, "test")')
@@ -87,7 +87,7 @@ all rows in the result set.
 
 ### Advanced usage
 
-All the `fetch_*` and `get_*` methods (except `get_scalar()` and `fetch_all_scalar()` obviously) accepts factory function
+All the `fetch_*` and `get_*` methods (except `get_scalar()` obviously) accepts factory function
 to customize the result object creation. This is useful when you want to create custom object from the row, or you want
 to create a different structure than `list` or `dict`.
 
@@ -98,9 +98,9 @@ for handling transactions. Each connection in the pool is regularly checked for 
 automatically replaced.
 
 Connection pool is created automatically when the first transaction is created. You can also create the pool manually
-using `TransactionFactory.ensure_pool()` method.
+using `asyncdb.aiomysql.TransactionFactory.ensure_pool()` method.
 
-The connection pool can be configured using `MySQLConfig` object:
+The connection pool can be configured using `asyncdb.aiomysql.MySQLConfig` object:
 
 - `max_pool_size` - maximum number of connections in the pool, including currently used ones.
 - `max_spare_conns` - maximum number of spare connections in the pool always ready to be used. When there is peak in traffic
@@ -120,23 +120,25 @@ The connection pool can be configured using `MySQLConfig` object:
 There are multiple error classes that are used to signal various errors in the database. All of them are subclasses of
 `Error` class. The most common errors are:
 
-- `Error` - base error class for database exceptions.
-    - `ConnectError` - connection related errors.
-    - `QueryError` - errors based on query execution. It then has
-        - `LogicError` - logical error, for example trying to execute another query while previous result set still has not been
-            fetched.
-            - `TooManyRowsError` - too many rows returned where expected only one row.
-            - `IntegrityError` - data integrity error such as foreign key violation or duplicate key.
-                - `DuplicateEntry` - duplicate entry exception.
-            - `EntityNotFound` - requested entity was not found
-        - `ParseError` - SQL parsing has failed
-        - `SyntaxError` - SQL parsing succeeded, but the syntax is incorrect
-        - `Deadlock` - database deadlocked.
-        - `LostConnection` - connection to the database was lost during query.
-        - `LockWaitTimeout` - lock wait timeout exceeded while trying to get lock for the rows.
-        - `ServerGone` - connection died before the query could be processed.
-        - `QueryTooBig` - SQL query exceeded the maximum allowed size.
-- `ImplicitRollback` - warning type issued when transaction has been automatically rolled back at the exit of the context.
+- `asyncdb.exceptions.Error` - base error class for database exceptions.
+    - `asyncdb.exceptions.ConnectError` - connection related errors.
+    - `asyncdb.exceptions.QueryError` - errors based on query execution. It then has
+        - `asyncdb.exceptions.LogicError` - logical error, for example trying to execute another query while previous result set
+          still has not been fetched.
+            - `asyncdb.exceptions.TooManyRowsError` - too many rows returned where expected only one row.
+            - `asyncdb.exceptions.IntegrityError` - data integrity error such as foreign key violation or duplicate key.
+                - `asyncdb.exceptions.DuplicateEntry` - duplicate entry exception.
+            - `asyncdb.exceptions.EntityNotFound` - requested entity was not found
+        - `asyncdb.exceptions.ParseError` - SQL parsing has failed
+        - `asyncdb.exceptions.SyntaxError` - SQL parsing succeeded, but the syntax is incorrect
+        - `asyncdb.exceptions.Deadlock` - database deadlocked.
+        - `asyncdb.exceptions.LostConnection` - connection to the database was lost during query.
+        - `asyncdb.exceptions.LockWaitTimeout` - lock wait timeout exceeded while trying to get lock for the rows.
+        - `asyncdb.exceptions.ServerGone` - connection died before the query could be processed.
+        - `asyncdb.exceptions.QueryTooBig` - SQL query exceeded the maximum allowed size.
+        - `asyncdb.exceptions.ScrollIndexError` - when seeking in the result set, the index is out of bounds.
+- `asyncdb.exceptions.ImplicitRollback` - warning type issued when transaction has been automatically rolled back at the exit
+  of the context.
 
 All the exceptions contain optional `remote_app` property which identifies the connection that caused the error.
 
@@ -266,7 +268,7 @@ async with db.transaction(TransactionIsolationLevel.READ_COMMITTED) as trx:
 The library is not compatible with DB-API 2.0, because it tries to do things differently. However, there is a compatibility
 layer that you can use to convert existing applications more easily.
 
-You can use `aiomysql.Transaction` object as you would use the cursor, as soon as you enter the transaction context:
+You can use `asyncdb.aiomysql.Transaction` object as you would use the cursor, as soon as you enter the transaction context:
 
 ```python
 
@@ -295,7 +297,7 @@ async with Transaction(connection) as trx:
 
 from logging import getLogger
 
-from .asyncdb import ObjectFetcher, Result, Transaction
+from .asyncdb import BoolResult, ObjectFetcher, Result, Transaction
 from .context import TransactionContext
 from .exceptions import EntityNotFound, LogicError, TooManyRowsError
 from .generics import ResultRow
@@ -308,6 +310,7 @@ __all__ = [  # noqa: RUF022
     "EntityNotFound",
     "LogicError",
     "ObjectFetcher",
+    "BoolResult",
     "Result",
     "ResultRow",
     "TooManyRowsError",
