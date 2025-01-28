@@ -16,7 +16,33 @@ from .observer import LoggingObserver, ObserverContext, QueryObserver, _QueryObs
 
 
 class AioMySQLConnection(aiomysql.Connection):
-    """Wrapper for aiomysql.Connection that allows observing queries, correctly sets timeouts, and provides timezone support."""
+    """
+    Wrapper for aiomysql.Connection that allows observing queries, correctly sets timeouts, and provides timezone support.
+
+    Usually in most applications, you don't want to initialize the connection on its own, you want to use connection pool
+    instead, to be able to handle multiple operations simultaneously. See `TransactionFactory` for more apropriate usage.
+
+    The connection itself is suitable for one-time jobs (cronjobs), where concurrency is usually not used.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+    >>>
+    >>> # Create the connection.
+    >>> conn = AioMySQLConnection(host="localhost", user="root", db="test")
+    >>>
+    >>> async def main():
+    >>>     # Open transaction on the connection. If the connection has not been connected, it is connected at first use here.
+    >>>     async with Transaction(conn) as trx:
+    >>>         # Perform normal operations on the transaction.
+    >>>         res = await trx.query("SELECT `id`, `name` FROM `products`")
+    >>>         # Don't forge to commit the transaction, otherwise implicit rollback will be performed.
+    >>>         await trx.commit()
+    >>>
+    >>> if __name__ == "__main__":
+    >>>     asyncio.run(main())
+    """
 
     def __init__(
         self,

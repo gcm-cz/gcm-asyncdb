@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from asyncdb import LogicError, ResultRow
+from asyncdb import LogicError, ResultRow, ObjectFetcher
 from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction
 from asyncdb.aiomysql.result import BoolResult
 from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError
@@ -395,5 +395,33 @@ async def test_dbapi_2_scroll(connection):
 
         with pytest.raises(ScrollIndexError):
             await trx.scroll(3)
+
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_objectfetcher(connection):
+    @dataclass
+    class Product:
+        id: int
+        name: str
+
+    async def fetch_products(trx: Transaction) -> list[Product]:
+        out: list[Product] = []
+
+        q = await trx.query("SELECT `id`, `name` FROM `products`")
+        async for product in ObjectFetcher[Product](q, Product):
+            out.append(product)
+        return out
+
+    async with Transaction(connection) as trx:
+        await trx.query("CREATE TEMPORARY TABLE products (id INT PRIMARY KEY, name VARCHAR(255))")
+        await trx.query("INSERT INTO products (id, name) VALUES (1, 'Product 1'), (2, 'Product 2'), (3, 'Product 3')")
+
+        assert await fetch_products(trx) == [
+            Product(id=1, name="Product 1"),
+            Product(id=2, name="Product 2"),
+            Product(id=3, name="Product 3"),
+        ]
 
         await trx.commit()

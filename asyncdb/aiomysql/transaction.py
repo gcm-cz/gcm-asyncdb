@@ -31,7 +31,33 @@ class TransactionIsolationLevel(str, Enum):
 class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     # pylint: disable=too-many-instance-attributes, too-many-public-methods
     """
-    Single database transaction.
+    Single database transaction. This is main access port to the database. By design, asyncdb enforces strong transaction
+    usage for accessing the database. This is to prevent common mistakes by forgetting to commit transaction, which can lead to
+    inconsistencies when using single connection from multiple points.
+
+    Transaction is created from connection and must be used as context manager. When you leave the context, the transaction is
+    automatically rolled back. This is to prevent leaving transaction open by mistake. If you want to commit the transaction,
+    you should do it manually within the context. After commit or rollback, the transaction is closed and cannot be used anymore.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+    >>>
+    >>> db_connection: AioMySQLConnection = ...
+    >>>
+    >>> async def main():
+    >>>     async with Transaction(db_connection) as trx:
+    >>>         await trx.query("SELECT 1")
+    >>>         # Note the missing commit here.
+    >>>     # Warning: ImplicitRollback: Rolling back uncommited transaction.
+    >>>
+    >>>     async with Transaction(db_connection) as trx:
+    >>>         await trx.query("SELECT 1")
+    >>>         await trx.commit()
+    >>>     # No warning here, transaction is commited.
+    >>>
+    >>> asyncio.run(main())
     """
 
     def __init__(self, connection: AioMySQLConnection, isolation_level: Optional[TransactionIsolationLevel] = None):
@@ -41,6 +67,18 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         This can be used as context manager to provide automatic rollback in case of error (recommended!). But the transaction
         will work even without context manager. In that case, your code must provide rollback functionality in case of error,
         otherwise the transaction will stay open.
+
+        Example:
+
+        >>> connection: AioMySQLConnection = ...
+        >>>
+        >>> # Transaction with default isolation level set by the database.
+        >>> async with Transaction(connection) as trx:
+        >>>     ...
+        >>>
+        >>> # Transaction with custom isolation level.
+        >>> async with Transaction(connection, TransactionIsolationLevel.SERIALIZABLE) as trx:
+        >>>     ...
 
         :param connection: Connection to use for the transaction. Remember, that only one transaction can be active on the
           connection at the time.
@@ -69,7 +107,23 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self.connection.attach(self.connection_observer)
 
     async def __aenter__(self) -> Self:
-        """Start the transaction."""
+        """
+        Start the transaction on context enter.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+        >>>
+        >>> connection: AioMySQLConnection = ...
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(connection) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.commit()
+        >>>
+        >>> asyncio.run(main())
+        """
         with _SL(3):
             await self._start_transaction()
 
@@ -78,21 +132,91 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     async def __aexit__(
         self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
     ) -> None:
-        """Rollback the transaction if it is still open."""
+        """
+        Exit async context. Rollback the transaction if it is still open.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+        >>>
+        >>> connection: AioMySQLConnection = ...
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(connection) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         # Note missing commit here.
+        >>>     # Warning: ImplicitRollback: Rolling back uncommited transaction.
+        >>>
+        >>>     async with Transaction(connection) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.commit()
+        >>>     # No warning issued, transaction is commited.
+        >>>
+        >>> asyncio.run(main())
+        """
         with _SL():
             return await super().__aexit__(exc_type, exc_val, exc_tb)
 
     def attach(self, observer: TransactionObserver) -> None:
-        """Attach observer to the transaction."""
+        """
+        Attach observer to the transaction.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction, TransactionObserver
+        >>>
+        >>> class MyObserver(TransactionObserver):
+        >>>     def observe_transaction_start(self, transaction: Transaction, **kwargs):
+        >>>         print("Transaction started")
+        >>>
+        >>>     def observe_transaction_commit(self, transaction: Transaction, **kwargs):
+        >>>         print("Transaction committed")
+        >>>
+        >>>     def observe_transaction_rollback(self, transaction: Transaction, **kwargs):
+        >>>         print("Transaction rolled back")
+        >>>
+        >>>     def observe_transaction_end(self, transaction: Transaction, **kwargs):
+        >>>         print("Transaction ended")
+        >>>
+        >>>     def observe_query_before(self, transaction: Transaction, query: str, args: tuple[Any, ...], **kwargs):
+        >>>         print(f"Query: {query} with args {args}")
+        >>>
+        >>>     def observe_query_after(self, transaction: Transaction, result: Result, **kwargs):
+        >>>         print(f"Query executed with result {result}")
+        >>>
+        >>>
+        >>> connection: AioMySQLConnection = ...
+        >>> async def main():
+        >>>     trx = Transaction(connection)
+        >>>     trx.attach(MyObserver())
+        >>>     async with trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.commit()
+        >>>
+        >>>     # Output:
+        >>>     # Transaction started
+        >>>     # Query: SELECT 1 with args ()
+        >>>     # Query executed with result <Result object at 0x7f5b0b5d6c10>
+        >>>     # Transaction committed
+        >>>     # Transaction ended
+        """
         self.observers.add(observer)
 
     def detach(self, observer: TransactionObserver) -> None:
-        """Detach observer from the transaction."""
+        """
+        Detach observer from the transaction.
+        """
         self.observers.remove(observer)
 
     @property
     def isolation_level(self) -> Optional[TransactionIsolationLevel]:
-        """Get current isolation level of this transaction. If None, default isolation level of the database is used."""
+        """
+        Get current isolation level of this transaction.
+
+        If property is None, default isolation level of the database is used. This level is not retrieved from the database.
+        """
         return self._isolation_level
 
     async def _start_transaction(self) -> None:
@@ -120,21 +244,89 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
                     _query_error_factory("BEGIN", exc, self._connection)
 
     async def is_committed(self) -> bool:
-        """Check if the transaction is committed."""
+        """
+        Check if the transaction is committed.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def do_some_fetching(trx: Transaction): ...
+        >>>
+        >>> async def do_some_work() -> None:
+        >>>     async with trx:
+        >>>         await do_some_fetching(trx)
+        >>>
+        >>>         if not await trx.is_committed():
+        >>>             await trx.commit()
+        >>>
+        >>> asyncio.run(do_some_work())
+        """
         return not self._transaction_open
 
     async def last_insert_id(self) -> int:
-        """Get last inserted ID for autoincrement column."""
+        """
+        Get last inserted ID for autoincrement column.
+
+        Example:
+
+        >>> import asyncio
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def main():
+        >>>     await trx.query("INSERT INTO `products` (`name`) VALUES ('Product 1')")
+        >>>     print(await trx.last_insert_id())
+        >>>     # 1
+        >>>
+        >>> asyncio.run(main())
+        """
         await self._check_transaction_open("")
         return cast(int, (await self._get_cursor()).lastrowid)
 
     async def affected_rows(self) -> int:
-        """Get number of affected rows by the last query."""
+        """
+        Get number of affected rows by the last query.
+
+        Example:
+
+        >>> import asyncio
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def main():
+        >>>     await trx.query("DELETE FROM `products` WHERE `id` = %s", 123)
+        >>>     print(await trx.affected_rows())
+        >>>     # 1
+        >>>
+        >>> asyncio.run(main())
+        """
         await self._check_transaction_open("")
         return (await self._get_cursor()).rowcount
 
     async def commit(self) -> None:
-        """Commit transaction"""
+        """
+        Commit transaction. After commit, no other operation can be performed on the transaction.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+        >>>
+        >>> connection: AioMySQLConnection = ...
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(connection) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.commit()
+        >>>
+        >>>         await trx.query(...)  # raises LogicError: Query after commit.
+        >>>
+        >>> asyncio.run(main())
+        """
         with _SL(2):
             with ObserverContext() as ctx:
                 await self._check_transaction_open("COMMIT")
@@ -159,7 +351,25 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
                         observer.observe_transaction_end(self, self.observer_context.get(id(observer)), **ctx.kwargs())
 
     async def rollback(self) -> None:
-        """Rollback transaction"""
+        """
+        Rollback transaction. After rollback, no other transaction can be performed on the transaction.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction
+        >>>
+        >>> connection: AioMySQLConnection = ...
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(connection) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.rollback()
+        >>>
+        >>>         await trx.query(...)  # raises LogicError: Query after rollback.
+        >>>
+        >>> asyncio.run(main())
+        """
         with _SL(2):
             with ObserverContext() as ctx:
                 await self._check_transaction_open("ROLLBACK")
@@ -247,6 +457,24 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
         """
         Execute single query inside the transaction scope.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb.aiomysql import Transaction
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def main():
+        >>>     res = await trx.query("SELECT * FROM `products` WHERE `id` = %s OR `name` = %s", 123, "Product 1")
+        >>>     async for row in res.fetch_all_dict():
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>     # {"id": 123, "name": "Product 123"}
+        >>>
+        >>> asyncio.run(main())
+
         :param query: Query to execute. Can contain %s for each arg from args.
         :param args: Arguments to the query
         :param kwargs: Some drivers supports also specifying keyword arguments for the query, but most does not.

@@ -261,6 +261,36 @@ async with db.transaction(TransactionIsolationLevel.READ_COMMITTED) as trx:
     await trx.commit()
 ```
 
+## DB-API 2.0 compatibility
+
+The library is not compatible with DB-API 2.0, because it tries to do things differently. However, there is a compatibility
+layer that you can use to convert existing applications more easily.
+
+You can use `aiomysql.Transaction` object as you would use the cursor, as soon as you enter the transaction context:
+
+```python
+
+from asyncdb.aiomysql import Transaction, AioMySQLConnection
+
+connection: AioMySQLConnection = ...
+
+async with Transaction(connection) as trx:
+    # execute method exists, it does not return result (to be compatible with cursor's execute) as query() does.
+    await trx.execute("SELECT * FROM products")
+
+    # there are also executemany() and callproc() methods.
+
+    # fetchone(), fetchall(), fetchmany() methods are present
+    row = await trx.fetchone()
+    print(row)
+
+    for row in await trx.fetchall():
+        print(row)
+
+    # Explicit commit is still required.
+    await trx.commit()
+```
+
 """
 
 from logging import getLogger
@@ -288,4 +318,5 @@ __all__ = [  # noqa: RUF022
     "aiomysql",
     "exceptions",
     "pool",
+    "asyncdb",
 ]

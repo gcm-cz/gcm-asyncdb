@@ -1,6 +1,8 @@
 """
-Async version of the base classes.
+Base classes for working with database transactions and results. Each individual driver inherits from these classes.
 """
+
+# pylint: disable=too-many-lines
 
 import inspect
 from abc import ABC, abstractmethod
@@ -33,12 +35,48 @@ from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResObj
 class Result(ABC):
     """
     Abstract base class representing result of query.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb import Transaction, Result
+    >>>
+    >>> async def main():
+    >>>     trx: Transaction = ...
+    >>>     q: Result = await trx.query("SELECT * FROM `products`")
+    >>>
+    >>>     async for row in q.fetch_all_dict():
+    >>>         print(row)
+    >>>     # Output:
+    >>>     # {"id": 1, "name": "Product 1"}
+    >>>
+    >>> asyncio.run(main())
     """
 
     @overload
     async def fetch_list(self, /) -> Optional[list[Any]]:
         """
         Fetch one row from result as `list` (indexed column access).
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_list():
+        >>>     print(row)
+        >>>     # [1, "Product 1"]
+        >>>
+        >>>     row = await q.fetch_list()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :return: `list` with row data or None if no rows are remaining in the result set.
         """
 
@@ -46,6 +84,31 @@ class Result(ABC):
     async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]:
         """
         Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     class customlist(list):
+        >>>         pass
+        >>>
+        >>>     row = await q.fetch_list(customlist):
+        >>>     print(row)
+        >>>     # [1, "Product 1"]
+        >>>     print(type(row))
+        >>>     # <class 'customlist'>
+        >>>
+        >>>     row = await q.fetch_list()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: List type that should be returned. Defaults to plain list.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs to the cls constructor.
@@ -57,6 +120,26 @@ class Result(ABC):
         """
         Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument,
         defaults to `list`.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_list():
+        >>>     print(row)
+        >>>     # [1, "Product 1"]
+        >>>
+        >>>     row = await q.fetch_list()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: List type that should be returned. Defaults to plain list.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs to the cls constructor.
@@ -67,6 +150,26 @@ class Result(ABC):
     async def fetch_dict(self, /) -> Optional[dict[str, Any]]:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_dict():
+        >>>     print(row)
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>
+        >>>     row = await q.fetch_dict()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :return: dict containing mapping from column names to values or None if no rows are remaining in the result set.
         """
 
@@ -74,6 +177,31 @@ class Result(ABC):
     async def fetch_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> Optional[DictT]:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     class customdict(dict):
+        >>>         pass
+        >>>
+        >>>     row = await q.fetch_dict(customdict):
+        >>>     print(row)
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>     print(type(row))
+        >>>     # <class 'customdict'>
+        >>>
+        >>>     row = await q.fetch_dict()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Dictionary type that should be returned.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -87,6 +215,26 @@ class Result(ABC):
         """
         Fetch one row from result as dictionary (mapping). The dictionary type can be specified as the cls argument. Defaults
         to `dict`.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_dict():
+        >>>     print(row)
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>
+        >>>     row = await q.fetch_dict()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Dictionary type that should be returned. Defaults to plain dict.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -97,6 +245,28 @@ class Result(ABC):
     async def fetch_object(self, /) -> Optional[ResultRow]:
         """
         Fetch one row from result as `ResultRow` objects.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_object():
+        >>>     print(f"ID: {row.id}, Name: {row.name}")
+        >>>     # ID: 1, Name: Product 1
+        >>>     print(type(row))
+        >>>     # <class 'ResultRow'>
+        >>>
+        >>>     row = await q.fetch_object()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :return: Instance of cls created from result row or `None` if no rows are remaining in the result set.
         """
 
@@ -106,6 +276,34 @@ class Result(ABC):
     ) -> Optional[OBJ]:
         """
         Fetch one row from result as object of type specified by the cls argument.
+
+        Example:
+
+        >>> import asyncio
+        >>> from dataclasses import dataclass
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_object(as_kwargs=True):
+        >>>     print(f"ID: {row.id}, Name: {row.name}")
+        >>>     # ID: 1, Name: Product 1
+        >>>     print(type(row))
+        >>>     # <class 'Product'>
+        >>>
+        >>>     row = await q.fetch_object(as_kwargs=True)
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
@@ -120,6 +318,34 @@ class Result(ABC):
     ) -> Optional[OBJ | ResultRow]:
         """
         Fetch one row from result as object of type specified by the cls argument. Defaults to generic `ResultRow` object.
+
+        Example:
+
+        >>> import asyncio
+        >>> from dataclasses import dataclass
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products` LIMIT 1")
+        >>>
+        >>>     row = await q.fetch_object(Product, as_kwargs=True):
+        >>>     print(f"ID: {row.id}, Name: {row.name}")
+        >>>     # ID: 1, Name: Product 1
+        >>>     print(type(row))
+        >>>     # <class 'Product'>
+        >>>
+        >>>     row = await q.fetch_object()
+        >>>     print(row)
+        >>>     # None  - no more rows.
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
@@ -144,6 +370,24 @@ class Result(ABC):
     def fetch_all_object(self, /, *, as_kwargs: bool = False) -> AsyncGenerator[ResultRow, None]:
         """
         Generate objects of type `ResultRow` for each row of the result set.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_object()
+        >>>         print(f"ID: {row.id}, Name: {row.name}")
+        >>>     # Output:
+        >>>     # ID: 1, Name: Product 1
+        >>>     # ID: 2, Name: Product 2
+        >>>
+        >>> asyncio.run(main())
+
         :return: Generator generating result rows as ResultRow objects.
         """
 
@@ -154,6 +398,30 @@ class Result(ABC):
         """
         Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
         to the `cls` constructor.
+
+        Example:
+
+        >>> import asyncio
+        >>> from dataclasses import dataclass
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_object(Product, as_kwargs=True)
+        >>>         print(f"ID: {row.id}, Name: {row.name}")
+        >>>     # Output:
+        >>>     # ID: 1, Name: Product 1
+        >>>     # ID: 2, Name: Product 2
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
@@ -168,6 +436,30 @@ class Result(ABC):
         """
         Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
         to the `cls` constructor. Defaults to `ResultRow` generic object.
+
+        Example:
+
+        >>> import asyncio
+        >>> from dataclasses import dataclass
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_object(Product, as_kwargs=True)
+        >>>         print(f"ID: {row.id}, Name: {row.name}")
+        >>>     # Output:
+        >>>     # ID: 1, Name: Product 1
+        >>>     # ID: 2, Name: Product 2
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
@@ -182,6 +474,24 @@ class Result(ABC):
     def fetch_all_dict(self, /) -> AsyncGenerator[dict[str, Any], None]:
         """
         Generate dicts for each row of the result set.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_dict()
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>     # {"id": 2, "name": "Product 2"}
+        >>>
+        >>> asyncio.run(main())
+
         :return: Generator generating result rows as dicts.
         """
 
@@ -190,6 +500,27 @@ class Result(ABC):
         """
         Generate dicts of type `cls` for each row of the result set, with optionally passing args and kwargs to the
         cls constructor.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     class customdict(dict):
+        >>>         pass
+        >>>
+        >>>     async for row in q.fetch_all_dict(customdict)
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>     # {"id": 2, "name": "Product 2"}
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Dictionary type that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -202,6 +533,26 @@ class Result(ABC):
         """
         Generate dicts of type `cls` for each row of the result set, with optionally passing args and kwargs to the
         cls constructor. Defaults to plain `dict`.
+
+        Example:
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_dict()
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>     # {"id": 2, "name": "Product 2"}
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: Dictionary type that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -214,6 +565,24 @@ class Result(ABC):
     def fetch_all_list(self, /) -> AsyncGenerator[list[Any], None]:
         """
         Generate `list` with row data for each row of the result set.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_list()
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # [1, "Product 1"]
+        >>>     # [2, "Product 2"]
+        >>>
+        >>> asyncio.run(main())
+
         :return: Generator generating result rows as `list`s
         """
 
@@ -222,6 +591,30 @@ class Result(ABC):
         """
         Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
         cls constructor.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> class customlist(list):
+        >>>     pass
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_list(customlist)
+        >>>         print(row)
+        >>>         print(type(row))
+        >>>     # Output:
+        >>>     # [1, "Product 1"]
+        >>>     # <class 'customlist'>
+        >>>     # [2, "Product 2"]
+        >>>     # <class 'customlist'>
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: List type that should be returned.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -234,6 +627,24 @@ class Result(ABC):
         """
         Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
         cls constructor.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id`, `name` FROM `products`")
+        >>>
+        >>>     async for row in q.fetch_all_list()
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # [1, "Product 1"]
+        >>>     # [2, "Product 2"]
+        >>>
+        >>> asyncio.run(main())
+
         :param cls: List type that should be returned. Defaults to plain `list`.
         :param args: Optional arguments to the cls constructor.
         :param kwargs: Optional kwargs for the constructor.
@@ -246,12 +657,43 @@ class Result(ABC):
     async def fetch_all_scalar(self) -> list[Any]:
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id` FROM `products`")
+        >>>
+        >>>     ids = await q.fetch_all_scalar()
+        >>>     print(ids)
+        >>>     # [1, 2, 3, ...]
+        >>>
+        >>> asyncio.run(main())
         """
 
     @overload
     async def fetch_all_scalar(self, factory: Type[SetT]) -> SetT:
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id` FROM `products`")
+        >>>
+        >>>     ids = await q.fetch_all_scalar(set)
+        >>>     print(ids)
+        >>>     # {1, 2, 3, ...}
+        >>>
+        >>> asyncio.run(main())
+
         :param factory: Factory to use for the output type.
         """
 
@@ -259,12 +701,49 @@ class Result(ABC):
     async def fetch_all_scalar(self, factory: Type[ListT]) -> ListT:
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> class customlist(list):
+        >>>     pass
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id` FROM `products`")
+        >>>
+        >>>     ids = await q.fetch_all_scalar(customlist)
+        >>>     print(ids)
+        >>>     # [1, 2, 3, ...]
+        >>>     print(type(ids))
+        >>>     # <class 'customlist'>
+        >>>
+        >>> asyncio.run(main())
+
         :param factory: Factory to use for the output type.
         """
 
     async def fetch_all_scalar(self, factory: Type[SetT | ListT | list[Any]] = list) -> SetT | ListT | list[Any]:
         """
         Fetch all rows from the result set as scalars.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction, Result
+        >>>
+        >>> async def main():
+        >>>     trx: Transaction = ...
+        >>>     q: Result = await trx.query("SELECT `id` FROM `products`")
+        >>>
+        >>>     ids = await q.fetch_all_scalar()
+        >>>     print(ids)
+        >>>     # [1, 2, 3, ...]
+        >>>
+        >>> asyncio.run(main())
+
         :param factory: Factory to use for the output type. Can be MutableSet or MutableSequence. Defaults to `list`.
         """
         if not inspect.isclass(factory) or not issubclass(factory, (MutableSet, MutableSequence)):
@@ -378,6 +857,17 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def __aenter__(self) -> Self:
         """
         Enter asynchronous transaction context.
+
+        Example:
+
+        >>> import asyncio
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.commit()
+        >>>
+        >>> asyncio.run(main())
         """
         return self
 
@@ -386,6 +876,17 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     ) -> None:
         """
         If transaction is not explicitly committed or rollbacked, it is rollbacked as cleanup strategy.
+
+        Example:
+
+        >>> import asyncio
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>     # Warning: ImplicitRollback: Rolling back uncommited transaction.
+        >>>
+        >>> asyncio.run(main())
         """
         if not await self.is_committed():
             warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get() + 2)
@@ -395,18 +896,68 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def is_committed(self) -> bool:
         """
         Return True if transaction has been commited.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def do_some_fetching(trx: Transaction): ...
+        >>>
+        >>> async def do_some_work() -> None:
+        >>>     async with trx:
+        >>>         await do_some_fetching(trx)
+        >>>
+        >>>         if not await trx.is_committed():
+        >>>             await trx.commit()
+        >>>
+        >>> asyncio.run(do_some_work())
         """
 
     @abstractmethod
     async def last_insert_id(self) -> int:
         """
         Return last used AUTO_INCREMENT value.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def main():
+        >>>     await trx.query("INSERT INTO `products` (`name`) VALUES ('Product 1')")
+        >>>     print(await trx.last_insert_id())
+        >>>     # 1
+        >>>
+        >>> asyncio.run(main())
         """
 
     @abstractmethod
     async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
         """
         Execute single query inside the transaction scope.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def main():
+        >>>     res = await trx.query("SELECT * FROM `products` WHERE `id` = %s OR `name` = %s", 123, "Product 1")
+        >>>     async for row in res.fetch_all_dict():
+        >>>         print(row)
+        >>>     # Output:
+        >>>     # {"id": 1, "name": "Product 1"}
+        >>>     # {"id": 123, "name": "Product 123"}
+        >>>
+        >>> asyncio.run(main())
+
         :param query: Query to execute. Can contain %s for each arg from args.
         :param args: Arguments to the query
         :param kwargs: Some drivers supports also specifying keyword arguments for the query, but most does not.
@@ -418,12 +969,40 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def affected_rows(self) -> int:
         """
         Return number of affected rows by most recent query.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> trx: Transaction = ...
+        >>>
+        >>> async def main():
+        >>>     await trx.query("DELETE FROM `products` WHERE `id` = %s", 123)
+        >>>     print(await trx.affected_rows())
+        >>>     # 1
+        >>>
+        >>> asyncio.run(main())
         """
 
     @abstractmethod
     async def commit(self) -> None:
         """
         Commit the transaction. After commit, no other operation can be performed on the transaction.
+
+        Example:
+
+        >>> import asyncio
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.commit()
+        >>>
+        >>>         await trx.query(...)   # raises LogicError: Query after commit
+        >>>
+        >>> asyncio.run(main())
+
         :raises: QueryError (or subclass of) if there was an error during commit.
         """
 
@@ -431,6 +1010,20 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def rollback(self) -> None:
         """
         Rollback the transaction. After rollback, no other operation can be performed on the transaction.
+
+        Example:
+
+        >>> import asyncio
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         await trx.query("SELECT 1")
+        >>>         await trx.rollback()
+        >>>
+        >>>         await trx.query(...)   # raises LogicError: Query after commit
+        >>>
+        >>> asyncio.run(main())
+
         :raises: QueryError (or subclass of) if there was an error during rollback.
         """
 
@@ -458,12 +1051,72 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         return row
 
     @overload
-    async def get_object(self, query: str, args: Optional[Iterable[Any]] = None, /) -> ResultRow: ...
+    async def get_object(self, query: str, args: Optional[Iterable[Any]] = None, /) -> ResultRow:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard `Result.fetch_object()`.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object("SELECT `id`, `name` FROM `products` WHERE `id` = %s", [1])
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
+        :param query: Query to be executed
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :return: Object retrieved by the query.
+        :raise: LogicError when query returns more than one row.
+        """
 
     @overload
     async def get_object(
         self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
-    ) -> OBJ: ...
+    ) -> OBJ:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard `Result.fetch_object()` of specified type.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>> from dataclasses import dataclass
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object(
+        >>>             "SELECT `id`, `name` FROM `products` WHERE `id` = %s",  # Query to be executed
+        >>>             [1],            # Query arguments as collection
+        >>>             Product,        # Type that will be fetched
+        >>>             as_kwargs=True  # Pass columns from query as kwargs to Product constructor.
+        >>>         )
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
+        :param query: Query to be executed
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :param cls: Class representing the object that should be returned.
+        :param cls_args: Optional arguments to the `cls` constructor.
+        :param cls_kwargs: Optional keyword arguments to the `cls` constructor.
+        :return: Object of type `cls` retrieved by the query.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
+        """
 
     @overload
     async def get_object(
@@ -473,8 +1126,49 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         cls: Callable[..., OBJ] = ...,
         /,
         *cls_args: Any,
+        as_kwargs: bool = False,
         **cls_kwargs: Any,
-    ) -> OBJ: ...
+    ) -> OBJ:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard `Result.fetch_object()` of specified type.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>> from dataclasses import dataclass
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object(
+        >>>             "SELECT `id`, `name` FROM `products` WHERE `id` = %s",  # Query to be executed
+        >>>             [1],                # Query arguments as collection
+        >>>             Product,            # Type that will be fetched
+        >>>             as_kwargs=True,     # Pass columns from query as kwargs to Product constructor.
+        >>>         )
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
+        :param query: Query to be executed
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :param cls: Factory creating the object that should be returned.
+        :param cls_args: Optional arguments to the `cls` constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param cls_kwargs: Optional keyword arguments to the `cls` constructor.
+        :return: Object of type `cls` retrieved by the query.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
+        """
 
     async def get_object(
         self,
@@ -483,22 +1177,47 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow,
         /,
         *cls_args: Any,
+        as_kwargs: bool = False,
         **cls_kwargs: Any,
     ) -> OBJ | ResultRow:
         """
         Retrieve single object from the database. The query must return exactly one row, which will be
         converted to object using standard Result.fetch_object.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object("SELECT `id`, `name` FROM `products` WHERE `id` = %s", [1])
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
         :param query: Query to execute
-        :param args: Arguments to the query
-        :param cls: See Result.fetch_object for details
-        :param cls_args: See Result.fetch_object for details
-        :param cls_kwargs: See Result.fetch_object for details
-        :return: Object retrieved by the query.
-        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
-        :raises: EntityNotFound if query returned a result set, but it was empty.
-        :raises: TooManyRowsError if query returned more than single row.
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :param cls: See `Result.fetch_object()` for details
+        :param cls_args: See `Result.fetch_object()` for details
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param cls_kwargs: See `Result.fetch_object()` for details
+        :return: Object of type specified by `cls` retrieved by the query.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
         """
-        return await self._get(lambda res: res.fetch_object, query, args, cls, *cls_args, **cls_kwargs)
+        return await self._get(
+            lambda res: res.fetch_object,
+            query,
+            args,
+            cls,
+            *cls_args,
+            as_kwargs=as_kwargs,
+            **cls_kwargs,
+        )
 
     @overload
     async def get_dict(self, query: str, args: Optional[Iterable[Any]] = None, /) -> dict[str, Any]: ...
@@ -520,15 +1239,29 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
         Retrieve single row from the database as dict. The query must return exactly one row, which will be
         converted to dict using standard Result.fetch_dict.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_dict("SELECT `id`, `name` FROM `products` WHERE `id` = %s", [1])
+        >>>         print(row)
+        >>>         # {"id": 1, "name": "Product 1"}
+        >>>
+        >>> asyncio.run(main())
+
         :param query: Query to execute
         :param args: Arguments to the query
         :param cls: See Result.fetch_dict for details
         :param cls_args: See Result.fetch_dict for details
         :param cls_kwargs: See Result.fetch_dict for details
         :return: Dict retrieved by the query.
-        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
-        :raises: EntityNotFound if query returned a result set, but it was empty.
-        :raises: TooManyRowsError if query returned more than single row.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
         """
         return await self._get(lambda res: res.fetch_dict, query, args, cls, *cls_args, **cls_kwargs)
 
@@ -552,15 +1285,32 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
         Retrieve single row from the database as list. The query must return exactly one row, which will be
         converted to list using standard Result.fetch_list.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_list(
+        >>>             "SELECT MIN(`price`), MAX(`price`), AVG(`price`) FROM `products` WHERE `id` IN (%s, %s, %s)",
+        >>>             [1, 2, 3]
+        >>>         )
+        >>>         print(row)
+        >>>         # [100, 300, 187.5]
+        >>>
+        >>> asyncio.run(main())
+
         :param query: Query to execute
         :param args: Arguments to the query
         :param cls: See Result.fetch_list for details
         :param cls_args: See Result.fetch_list for details
         :param cls_kwargs: See Result.fetch_list for details
         :return: List retrieved by the query.
-        :raises: LogicError if query did not return a result set (i.e. modifying query instead of SELECT).
-        :raises: EntityNotFound if query returned a result set, but it was empty.
-        :raises: TooManyRowsError if query returned more than single row.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
         """
         return await self._get(lambda res: res.fetch_list, query, args, cls, *cls_args, **cls_kwargs)
 
@@ -568,6 +1318,22 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
         Retrieve single value from the database. The query must return exactly one row and that
         row must contain exactly one column, which is then returned from this method.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>>
+        >>> async def count_products(trx: Transaction, min_price: int) -> int:
+        >>>     return await trx.get_scalar("SELECT COUNT(*) FROM `products` WHERE `price` >= %s", [min_price])
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         print(await count_products(trx, 100))
+        >>>         # 5
+        >>>
+        >>> asyncio.run(main())
+
         :param query: Query to execute
         :param args: Query arguments.
         :return: Value of first column of the first row of the result set.
@@ -605,6 +1371,30 @@ class ObjectFetcher(Generic[ResObjT]):
 
     This should not be needed anymore, but is there for backward compatibility. Currently, fetch_object should be
     correctly typed for Python 3.11+ to provide correct type hints.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb import ObjectFetcher
+    >>> from asyncdb.aiomysql import Transaction, AioMySQLConnection
+    >>> from dataclasses import dataclass
+    >>>
+    >>> connection: AioMySQLConnection = ...
+    >>>
+    >>> @dataclass
+    >>> class Product:
+    >>>     id: int
+    >>>     name: str
+    >>>
+    >>> async def fetch_products() -> list[Product]:
+    >>>     out: list[Product] = []
+    >>>     async with Transaction(connection) as trx:
+    >>>         q = await trx.query("SELECT `id`, `name` FROM `products`")
+    >>>         async for product in ObjectFetcher[Product](q, Product):
+    >>>             out.append(product)
+    >>>     return out
+    >>>
+    >>> asyncio.run(fetch_products())
     """
 
     def __init__(
@@ -624,10 +1414,22 @@ class ObjectFetcher(Generic[ResObjT]):
         :param as_kwargs: See Result.fetch_object for details.
         """
         self.q: Result = q
+        """Result this ObjectFetcher will iterate over."""
+
         self.cls = cls
+        """Class (or factory) representing the object that should be returned."""
+
         self.cls_args = cls_args or []
+        """Optional arguments to the cls constructor."""
+
         self.cls_kwargs = cls_kwargs or {}
+        """Optional kwargs for the constructor."""
+
         self.as_kwargs = as_kwargs
+        """
+        Should the row attributes be passed as kwargs to the constructor? If False, properties will be set directly using
+        setattr().
+        """
 
     def __aiter__(self) -> Self:
         """

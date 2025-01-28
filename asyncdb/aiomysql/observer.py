@@ -18,6 +18,36 @@ class QueryObserver(ABC):  # noqa: B024
     """
     Abstract class for query observer. Implement this class to observe query execution. None of the methods actually needs
     to be overwritten, but you can override any of them to hook into any part of query execution process.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb.aiomysql import QueryObserver, AioMySQLConnection
+    >>>
+    >>> class MyObserver(QueryObserver):
+    >>>     def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs):
+    >>>         print(f"Query: {query}")
+    >>>
+    >>>     def observe_query_after(self, conn: AioMySQLConnection, query: str, context: Any, **kwargs):
+    >>>         print(f"Query executed")
+    >>>
+    >>>     def observe_query_error(self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, **kwargs):
+    >>>         print(f"Query failed with error {error}")
+    >>>
+    >>> connection: AioMySQLConnection = ...
+    >>>
+    >>> # Attach observer instance to the connection.
+    >>> connection.attach(MyObserver())
+    >>>
+    >>> async def main():
+    >>>     # When executing query, observer methods are called.
+    >>>     await connection.query("SELECT 1")
+    >>>
+    >>>     # Output:
+    >>>     # Query: SELECT 1
+    >>>     # Query executed
+    >>>
+    >>> asyncio.run(main())
     """
 
     def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs: Any) -> Any:  # noqa: B027
@@ -56,6 +86,49 @@ class TransactionObserver(ABC):  # noqa: B024
     Abstract class to observing transaction.
     Implement this class to observe transaction execution. None of the methods actually needs to be overwritten, but you can
     override any of them to hook into any part of transaction execution process.
+
+    Example:
+
+    >>> import asyncio
+    >>> from asyncdb.aiomysql import Transaction, Result, TransactionObserver, AioMySQLConnection
+
+    >>> class MyObserver(TransactionObserver):
+    >>>     def observe_transaction_start(self, transaction: Transaction, **kwargs):
+    >>>         print("Transaction started")
+    >>>
+    >>>     def observe_transaction_commit(self, transaction: Transaction, **kwargs):
+    >>>         print("Transaction committed")
+    >>>
+    >>>     def observe_transaction_rollback(self, transaction: Transaction, **kwargs):
+    >>>         print("Transaction rolled back")
+    >>>
+    >>>     def observe_transaction_end(self, transaction: Transaction, **kwargs):
+    >>>         print("Transaction ended")
+    >>>
+    >>>     def observe_query_before(self, transaction: Transaction, query: str, args: tuple[Any, ...], **kwargs):
+    >>>         print(f"Query: {query} with args {args}")
+    >>>
+    >>>     def observe_query_after(self, transaction: Transaction, result: Result, **kwargs):
+    >>>         print(f"Query executed with result {result}")
+    >>>
+    >>>
+    >>> connection: AioMySQLConnection = ...
+    >>> trx = Transaction(connection)
+    >>> trx.attach(MyObserver())
+    >>>
+    >>> async def main():
+    >>>     async with trx:
+    >>>         await trx.query("SELECT 1")
+    >>>         await trx.commit()
+    >>>
+    >>>     # Output:
+    >>>     # Transaction started
+    >>>     # Query: SELECT 1 with args ()
+    >>>     # Query executed with result <Result object at 0x7f5b0b5d6c10>
+    >>>     # Transaction committed
+    >>>     # Transaction ended
+    >>>
+    >>> asyncio.run(main())
     """
 
     def observe_query_before(self, conn: AioMySQLConnection, query: str, trx_context: Any, **kwargs: Any) -> Any:  # noqa: B027
