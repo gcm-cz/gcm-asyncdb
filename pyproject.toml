@@ -112,3 +112,6 @@ ignore = [
     "N818",  # https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/
     "S608",  # https://docs.astral.sh/ruff/rules/hardcoded-sql-expression/
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode="auto"

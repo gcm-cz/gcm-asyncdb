@@ -54,12 +54,16 @@ def connection(catch_queries):
 
 
 @pytest.fixture(scope="function")
-def factory(catch_queries):
+async def factory(catch_queries):
     factory = TransactionFactory(
         config=config,
         connection_observers=[catch_queries],
     )
     yield factory
+
+    for pool in TransactionFactory._pool_cache.values():
+        await pool.close()
+
     TransactionFactory._pool_cache.clear()
 
 @pytest.fixture(scope="function")
