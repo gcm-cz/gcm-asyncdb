@@ -176,8 +176,10 @@ async def test_errors(connection, caplog):
             with pytest.raises(ParseError):
                 await transaction.query("SYNTAX ERROR")
 
+    print("\n".join(map(str, caplog.records)))
+
     for record in caplog.records:
-        assert record.filename == "test_connection.py"
+        assert record.filename == "test_connection.py", record.message
 
 
 @pytest.mark.asyncio
