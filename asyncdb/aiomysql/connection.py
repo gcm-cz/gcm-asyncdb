@@ -178,6 +178,10 @@ class AioMySQLConnection(aiomysql.Connection):
         """Detach observer instance from the connection."""
         self.observers.remove(observer)
 
+    async def _connect(self) -> None:
+        with _SL():
+            await super()._connect()
+
     def observe_query_before(self, sql: str, **kwargs: Any) -> dict[int, Any]:
         """
         Callback called before query execution.
@@ -232,7 +236,7 @@ class AioMySQLConnection(aiomysql.Connection):
 
     async def query(self, sql: str, unbuffered: bool = False, **kwargs: Any) -> int:
         """Override aiomysql's query to provide query observing."""
-        with _SL(4):
+        with _SL(3):
             with _QueryObserverContext(self, **kwargs):
                 return await super().query(sql, unbuffered)
 

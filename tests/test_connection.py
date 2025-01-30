@@ -1,4 +1,3 @@
-import logging
 import os
 import warnings
 from dataclasses import dataclass
@@ -8,84 +7,146 @@ from typing import Any
 import pytest
 
 from asyncdb import LogicError, ResultRow, ObjectFetcher
-from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction
+from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, MySQLConfig, \
+    TransactionIsolationLevel
 from asyncdb.aiomysql.result import BoolResult
 from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError
 
 
+config = MySQLConfig(
+    host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+    port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+    user=os.getenv("TEST_MYSQL_USER", "root"),
+    password=os.getenv("TEST_MYSQL_PASSWORD", ""),
+    database=os.getenv("TEST_MYSQL_DATABASE", "test"),
+    max_pool_size=1,
+)
+
+
 class TestQueryObserver(QueryObserver):
-    def observe_query_before(self, conn: "CustomAioMySQLConnection", query: str, **kwargs: Any) -> Any:
-        conn.QUERIES_EXECUTED.append(query)
-        return query
-
-
-class CustomAioMySQLConnection(AioMySQLConnection):
-    def __init__(self, *args: Any, **kwargs: Any):
-        super().__init__(*args, **kwargs)
-        self.QUERIES_EXECUTED = []
-        self.attach(TestQueryObserver())
-
-    async def _connect(self):
-        await super()._connect()
+    def __init__(self):
+        super().__init__()
         self.QUERIES_EXECUTED = []
 
+    def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs: Any) -> Any:
+        self.QUERIES_EXECUTED.append(query)
 
-@pytest.fixture
-def connection():
-    return CustomAioMySQLConnection(
-        host=os.getenv("TEST_MYSQL_HOST", "localhost"),
-        port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
-        user="root",
-        db="test",
+    def clear(self):
+        self.QUERIES_EXECUTED.clear()
+
+
+@pytest.fixture(scope="function")
+def catch_queries():
+    return TestQueryObserver()
+
+
+@pytest.fixture(scope="function")
+def connection(catch_queries):
+    conn = AioMySQLConnection(
+        host=config.host,
+        port=config.port,
+        user=config.user,
+        password=config.password,
+        db=config.database,
     )
+    conn.attach(catch_queries)
+    return conn
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
+def factory(catch_queries):
+    factory = TransactionFactory(
+        config=config,
+        connection_observers=[catch_queries],
+    )
+    yield factory
+    TransactionFactory._pool_cache.clear()
+
+@pytest.fixture(scope="function")
 def connection_naive_dt():
-    return CustomAioMySQLConnection(
-        host=os.getenv("TEST_MYSQL_HOST", "localhost"),
-        port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
-        user="root",
-        db="test",
+    return AioMySQLConnection(
+        host=config.host,
+        port=config.port,
+        user=config.user,
+        password=config.password,
+        db=config.database,
         timezone=None,
     )
 
 
 @pytest.mark.asyncio
-async def test_simple_query(connection):
+async def test_simple_query(connection, catch_queries, caplog):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as trx:
+            catch_queries.clear()
             q = await trx.query("SELECT 1")
             async for row in q.fetch_all_dict():
                 assert isinstance(row, dict)
                 assert row["1"] == 1
 
-    logging.warning(connection.QUERIES_EXECUTED)
-
+    assert "SELECT 1" in catch_queries.QUERIES_EXECUTED
     # Query has been implicitly rolled back, so there is ROLLBACK and no COMMIT in the executed queries.
-    assert "ROLLBACK" in connection.QUERIES_EXECUTED
-    assert "COMMIT" not in connection.QUERIES_EXECUTED
+    assert "ROLLBACK" in catch_queries.QUERIES_EXECUTED
+    assert "COMMIT" not in catch_queries.QUERIES_EXECUTED
+
+    for record in caplog.records:
+        assert record.filename == "test_connection.py"
 
 
 @pytest.mark.asyncio
-async def test_get(connection):
+async def test_rollback_when_exception(connection, catch_queries):
+    with pytest.raises(TypeError):
+        with pytest.warns(ImplicitRollback):
+            async with Transaction(connection) as trx:
+                catch_queries.clear()
+                one = await trx.get_scalar("SELECT 1")
+                print(one / None)
+                await trx.commit()
+
+    assert "SELECT 1" in catch_queries.QUERIES_EXECUTED
+    assert "ROLLBACK" in catch_queries.QUERIES_EXECUTED
+    assert "COMMIT" not in catch_queries.QUERIES_EXECUTED
+
+
+@pytest.mark.asyncio
+async def test_rollback_factory_when_exception(factory, catch_queries):
+    with pytest.raises(TypeError):
+        with pytest.warns(ImplicitRollback):
+            async with factory.transaction() as trx:
+                catch_queries.clear()
+                one = await trx.get_scalar("SELECT 1")
+                print(one / None)
+                await trx.commit()
+
+    assert "SELECT 1" in catch_queries.QUERIES_EXECUTED
+    assert "ROLLBACK" in catch_queries.QUERIES_EXECUTED
+    assert "COMMIT" not in catch_queries.QUERIES_EXECUTED
+
+
+@pytest.mark.asyncio
+async def test_get(connection, caplog):
     async with Transaction(connection) as trx:
         assert await trx.get_scalar("SELECT 1") == 1
         assert await trx.get_list("SELECT 1") == [1]
         assert await trx.get_dict("SELECT 1") == {"1": 1}
 
+    for record in caplog.records:
+        if "SELECT 1" in record.message:
+            assert record.filename == "test_connection.py"
+
 
 @pytest.mark.asyncio
-async def test_commit(connection):
+async def test_commit(connection, catch_queries):
     async with Transaction(connection) as trx:
+        catch_queries.clear()
         q = await trx.query("SELECT 1")
         async for row in q.fetch_all_list():
             assert isinstance(row, list)
             assert row[0] == 1
         await trx.commit()
 
-    assert "ROLLBACK" not in connection.QUERIES_EXECUTED
-    assert "COMMIT" in connection.QUERIES_EXECUTED
+    assert "ROLLBACK" not in catch_queries.QUERIES_EXECUTED
+    assert "COMMIT" in catch_queries.QUERIES_EXECUTED
 
 
 @pytest.mark.asyncio
@@ -102,7 +163,7 @@ async def test_operation_after_commit(connection):
 
 
 @pytest.mark.asyncio
-async def test_errors(connection):
+async def test_errors(connection, caplog):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             q = await transaction.query("SELECT 1")
@@ -115,14 +176,20 @@ async def test_errors(connection):
             with pytest.raises(ParseError):
                 await transaction.query("SYNTAX ERROR")
 
+    for record in caplog.records:
+        assert record.filename == "test_connection.py"
+
 
 @pytest.mark.asyncio
-async def test_bool_result(connection):
+async def test_bool_result(connection, caplog):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             q = await transaction.query("COMMIT")
             assert isinstance(q, BoolResult)
             assert bool(q) is True
+
+    for record in caplog.records:
+        assert record.filename == "test_connection.py"
 
 
 @pytest.mark.asyncio
@@ -425,3 +492,17 @@ async def test_objectfetcher(connection):
         ]
 
         await trx.commit()
+
+@pytest.mark.asyncio
+async def test_transaction_isolation_level(connection, caplog):
+    async with Transaction(connection, isolation_level=TransactionIsolationLevel.SERIALIZABLE) as trx:
+        await trx.commit()
+
+    for record in caplog.records:
+        # Ensure that the isolation level is set correctly and logged from where the transaction has been started.
+        if "SET TRANSACTION ISOLATION LEVEL" in record.message:
+            assert "SERIALIZABLE" in record.message
+            assert record.filename == "test_connection.py"
+
+        if "BEGIN" in record.message or "COMMIT" in record.message:
+            assert record.filename == "test_connection.py"

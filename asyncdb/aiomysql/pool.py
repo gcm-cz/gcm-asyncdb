@@ -1,14 +1,16 @@
 import asyncio
+from collections.abc import Collection
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional, cast
+from typing import Any, AsyncGenerator, Optional, Type, cast
 
 import aiomysql
 
 from .. import logger
+from .._sl import _SL
 from ..pool import CountedConnection, DatabaseConnectionPool, PooledTransaction
 from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
-from .observer import ObserverContext
+from .observer import ObserverContext, QueryObserver, TransactionObserver
 from .transaction import Transaction, TransactionIsolationLevel
 
 
@@ -17,18 +19,31 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
     Connection pool providing aiomysql transactions.
     """
 
-    def __init__(self, config: Optional[MySQLConfigProtocol] = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        config: Optional[MySQLConfigProtocol] = None,
+        connection_class: Type[AioMySQLConnection] = AioMySQLConnection,
+        connection_observers: Optional[Collection[QueryObserver]] = None,
+        transaction_observers: Optional[Collection[TransactionObserver]] = None,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the connection pool
         :param config: MySQLConfig with configuration.
+        :param connection_class: Connection class to use for the pool. Defaults to `AioMySQLConnection`.
+        :param connection_observers: Collection of observers to attach to each connection.
+        :param transaction_observers: Collection of observers to attach to each transaction.
         :param kwargs: Any additional arguments for either the connection pool or the database constructor.
         """
         self.config = config or MySQLConfig()
         """Configuration used to spawn MySQL connections and to configure the pool."""
 
+        self._connection_observers = connection_observers
+        self._transaction_observers = transaction_observers
+
         super().__init__(
             Transaction,
-            AioMySQLConnection,
+            connection_class,
             max_pool_size=self.config.max_pool_size,
             max_spare_conns=self.config.max_spare_conns,
             min_spare_conns=self.config.min_spare_conns,
@@ -50,7 +65,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         Create new connection.
         :return: Created connection.
         """
-        conn = self.connection_class(
+        conn: AioMySQLConnection = self.connection_class(
             host=self.config.host,
             port=self.config.port,
             user=self.config.user,
@@ -64,29 +79,33 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
             init_command=f"SET net_read_timeout={self.config.read_timeout}; SET net_write_timeout={self.config.write_timeout};",
         )
 
+        for observer in self._connection_observers or []:
+            conn.attach(observer)
+
         conn.logger.debug(
             "Connecting to mysql://%s@%s:%d/%s", self.config.user, self.config.host, self.config.port, self.config.database
         )
 
-        with ObserverContext(logger=logger.getChild("mysql.startup")):
-            try:
-                # pylint: disable=protected-access
-                await asyncio.wait_for(conn._connect(), self.config.connect_timeout)
-                conn.logger.debug("Connected!")
-                return conn
-            except (aiomysql.OperationalError, asyncio.TimeoutError) as exc:
-                if hasattr(exc, "__cause__") and exc.__cause__:
-                    conn.logger.error(
-                        "Connection failed with %s (caused by %s)",
-                        str(exc) or exc.__class__.__name__,
-                        str(exc.__cause__) or exc.__cause__.__class__.__name__,
-                    )
-                else:
-                    conn.logger.error("Connection failed with %s", str(exc) or exc.__class__.__name__)
-                raise
-            except Exception as exc:
-                conn.logger.exception(exc)
-                raise
+        with _SL(3):
+            with ObserverContext(logger=logger.getChild("mysql.startup")):
+                try:
+                    # pylint: disable=protected-access
+                    await asyncio.wait_for(conn._connect(), self.config.connect_timeout)
+                    conn.logger.debug("Connected!")
+                    return conn
+                except (aiomysql.OperationalError, asyncio.TimeoutError) as exc:
+                    if hasattr(exc, "__cause__") and exc.__cause__:
+                        conn.logger.error(
+                            "Connection failed with %s (caused by %s)",
+                            str(exc) or exc.__class__.__name__,
+                            str(exc.__cause__) or exc.__cause__.__class__.__name__,
+                        )
+                    else:
+                        conn.logger.error("Connection failed with %s", str(exc) or exc.__class__.__name__)
+                    raise
+                except Exception as exc:
+                    conn.logger.exception(exc)
+                    raise
 
     async def check_conn(self, conn: CountedConnection[AioMySQLConnection]) -> bool:
         """
@@ -116,7 +135,10 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         await conn.ensure_closed()
 
     async def get_transaction(
-        self, isolation_level: Optional[TransactionIsolationLevel] = None, *, stacklevel: int = 1
+        self,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        *,
+        stacklevel: int = 1,
     ) -> Transaction:
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
@@ -126,7 +148,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :return: Instance of transaction class.
         """
         conn = await self.get_conn(stacklevel + 1)
-        trans = PooledTransaction(self.transaction_class(conn, isolation_level), pool=self)
+        trans = PooledTransaction(self.transaction_class(conn, isolation_level, observers=self._transaction_observers), pool=self)
         conn.current_transaction = trans
 
         return cast(Transaction, trans)

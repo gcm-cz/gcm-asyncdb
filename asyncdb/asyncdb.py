@@ -937,8 +937,9 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>> asyncio.run(main())
         """
         if not await self.is_committed():
-            warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get() + 2)
-            await self.rollback()
+            with _SL():
+                warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get() + 2)
+                await self.rollback()
 
     @abstractmethod
     async def is_committed(self) -> bool:
@@ -1087,19 +1088,20 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         *cls_args: Any,
         **cls_kwargs: Any,
     ) -> T:
-        res = await self.query(query, *(args or []))
-        if not isinstance(res, Result) or isinstance(res, BoolResult):
-            raise LogicError(query, "Query did not return result.")
+        with _SL():
+            res = await self.query(query, *(args or []))
+            if not isinstance(res, Result) or isinstance(res, BoolResult):
+                raise LogicError(query, "Query did not return result.")
 
-        row = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
-        if row is None:
-            raise EntityNotFound(query, "Requested entity was not found.")
+            row = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
+            if row is None:
+                raise EntityNotFound(query, "Requested entity was not found.")
 
-        another = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
-        if another is not None:
-            raise TooManyRowsError(query, "Query returned more than one row.")
+            another = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
+            if another is not None:
+                raise TooManyRowsError(query, "Query returned more than one row.")
 
-        return row
+            return row
 
     @overload
     async def get_object(self, query: str, args: Optional[Iterable[Any]] = None, /) -> ResultRow:
@@ -1260,15 +1262,16 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :raises: `EntityNotFound` if query returned a result set, but it was empty.
         :raises: `TooManyRowsError` if query returned more than single row.
         """
-        return await self._get(
-            lambda res: res.fetch_object,
-            query,
-            args,
-            cls,
-            *cls_args,
-            as_kwargs=as_kwargs,
-            **cls_kwargs,
-        )
+        with _SL():
+            return await self._get(
+                lambda res: res.fetch_object,
+                query,
+                args,
+                cls,
+                *cls_args,
+                as_kwargs=as_kwargs,
+                **cls_kwargs,
+            )
 
     @overload
     async def get_dict(self, query: str, args: Optional[Iterable[Any]] = None, /) -> dict[str, Any]: ...
@@ -1314,7 +1317,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :raises: `EntityNotFound` if query returned a result set, but it was empty.
         :raises: `TooManyRowsError` if query returned more than single row.
         """
-        return await self._get(lambda res: res.fetch_dict, query, args, cls, *cls_args, **cls_kwargs)
+        with _SL():
+            return await self._get(lambda res: res.fetch_dict, query, args, cls, *cls_args, **cls_kwargs)
 
     @overload
     async def get_list(self, query: str, args: Optional[Iterable[Any]] = None, /) -> list[Any]: ...
@@ -1363,7 +1367,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :raises: `EntityNotFound` if query returned a result set, but it was empty.
         :raises: `TooManyRowsError` if query returned more than single row.
         """
-        return await self._get(lambda res: res.fetch_list, query, args, cls, *cls_args, **cls_kwargs)
+        with _SL():
+            return await self._get(lambda res: res.fetch_list, query, args, cls, *cls_args, **cls_kwargs)
 
     async def get_scalar(self, query: str, args: Optional[Iterable[Any]] = None) -> Any:
         """
@@ -1392,11 +1397,12 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :raises: `EntityNotFound` if query returned a result set, but it was empty.
         :raises: `TooManyRowsError` if query returned more than single row or a row contains more than single column.
         """
-        row: Sequence[Any] = await self.get_list(query, args)
-        if len(row) != 1:
-            raise TooManyRowsError(query, "Result must contain only one column to be fetched as scalar.")
+        with _SL():
+            row: Sequence[Any] = await self.get_list(query, args)
+            if len(row) != 1:
+                raise TooManyRowsError(query, "Result must contain only one column to be fetched as scalar.")
 
-        return row[0]
+            return row[0]
 
     @property
     @abstractmethod

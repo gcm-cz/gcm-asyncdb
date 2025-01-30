@@ -1,8 +1,11 @@
 import asyncio
-from typing import AsyncGenerator, ClassVar, Optional
+from collections.abc import Collection
+from typing import AsyncGenerator, ClassVar, Optional, Type
 
 from ..context import TransactionContext
 from .config import MySQLConfigProtocol
+from .connection import AioMySQLConnection
+from .observer import QueryObserver, TransactionObserver
 from .pool import MySQLConnectionPool
 from .transaction import Transaction, TransactionIsolationLevel
 
@@ -94,11 +97,19 @@ class TransactionFactory:
 
     _pool_cache: ClassVar[dict[tuple[str, int, str, str], MySQLConnectionPool]] = {}
 
-    def __init__(self, config: MySQLConfigProtocol, isolation_level: Optional[TransactionIsolationLevel] = None) -> None:
+    def __init__(
+        self,
+        config: MySQLConfigProtocol,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        connection_class: Type[AioMySQLConnection] = AioMySQLConnection,
+        connection_observers: Optional[Collection[QueryObserver]] = None,
+        transaction_observers: Optional[Collection[TransactionObserver]] = None,
+    ) -> None:
         """
         :param config: Configuration of the MySQL pool.
         :param isolation_level: Default transaction isolation level for transactions created using this factory. If None,
             server's default isolation level is used.
+        :param connection_class: Connection class to use for the pool. Defaults to `AioMySQLConnection`.
         """
         self._cache_key = (config.host, config.port, config.user, config.database)
 
@@ -109,6 +120,10 @@ class TransactionFactory:
         """Default transaction isolation level for transactions created using this factory. If None, server's default
         isolation level is used."""
 
+        self._connection_class = connection_class
+        self._connection_observers = connection_observers or []
+        self._transaction_observers = transaction_observers or []
+
     def ensure_pool(self) -> None:
         # pylint: disable=protected-access
         """
@@ -117,7 +132,12 @@ class TransactionFactory:
         """
 
         if self._cache_key not in self.__class__._pool_cache:
-            self.__class__._pool_cache[self._cache_key] = MySQLConnectionPool(self.config)
+            self.__class__._pool_cache[self._cache_key] = MySQLConnectionPool(
+                self.config,
+                connection_class=self._connection_class,
+                connection_observers=self._connection_observers,
+                transaction_observers=self._transaction_observers,
+            )
 
     @property
     def pool(self) -> MySQLConnectionPool:

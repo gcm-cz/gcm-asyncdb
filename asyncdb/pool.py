@@ -95,8 +95,9 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         self.pool = pool
 
     async def __aenter__(self) -> Self:
-        if hasattr(super(), "__aenter__"):
-            await super().__aenter__()
+        if hasattr(self.__wrapped__, "__aenter__"):
+            with _SL():
+                await self.__wrapped__.__aenter__()
 
         return self
 
@@ -107,9 +108,9 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         Return connection to the pool when the transaction's context is left.
         """
         try:
-            if hasattr(super(), "__aexit__"):
-                with _SL():
-                    await super().__aexit__(exc_type, exc_val, exc_tb)
+            if hasattr(self.__wrapped__, "__aexit__"):
+                with _SL(2):
+                    await self.__wrapped__.__aexit__(exc_type, exc_val, exc_tb)
 
             cast(CountedConnection[ConnectionTypeT], self.connection).current_transaction = None
         finally:

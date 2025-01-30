@@ -31,7 +31,7 @@ class TransactionContext(Generic[T]):
     async def __aenter__(self) -> T:
         """Start the transaction on async context entry."""
         self.trx = await self.awaitable
-        with _SL(2):
+        with _SL():
             return await self.trx.__aenter__()
 
     async def __aexit__(
@@ -39,5 +39,4 @@ class TransactionContext(Generic[T]):
     ) -> None:
         """Exits the transaction on async context exit."""
         if self.trx is not None:
-            with _SL():
-                await self.trx.__aexit__(exc_type, exc_val, exc_tb)
+            await self.trx.__aexit__(exc_type, exc_val, exc_tb)

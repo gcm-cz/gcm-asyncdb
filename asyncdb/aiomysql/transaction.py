@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from enum import Enum
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Optional, Self, Type, cast
@@ -60,7 +61,12 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     >>> asyncio.run(main())
     """
 
-    def __init__(self, connection: AioMySQLConnection, isolation_level: Optional[TransactionIsolationLevel] = None):
+    def __init__(
+        self,
+        connection: AioMySQLConnection,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        observers: Optional[Collection[TransactionObserver]] = None,
+    ):
         """
         Create new transaction on top of existing AioMySQLConnection.
 
@@ -83,6 +89,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param connection: Connection to use for the transaction. Remember, that only one transaction can be active on the
           connection at the time.
         :param isolation_level: Transaction isolation level to use. If None, default isolation level of the database is used.
+        :param observers: Collection of observers to attach to the transaction.
         """
         super().__init__(connection)
 
@@ -106,6 +113,10 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         self.connection.attach(self.connection_observer)
 
+        if observers:
+            for observer in observers:
+                self.attach(observer)
+
     async def __aenter__(self) -> Self:
         """
         Start the transaction on context enter.
@@ -124,7 +135,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>>
         >>> asyncio.run(main())
         """
-        with _SL(3):
+        with _SL(2):
             await self._start_transaction()
 
         return await super().__aenter__()
@@ -223,25 +234,27 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         if self._transaction_initiated:
             raise LogicError("", "Transaction has already been started.", remote_app=self.remote_app)
 
-        if not hasattr(self.connection, "connected_time"):
-            await self.connection._connect()  # pylint: disable=protected-access
-
-        self._transaction_initiated = True
-
-        if self._isolation_level is not None:
-            await self._connection.query(f"SET TRANSACTION ISOLATION LEVEL {self._isolation_level.value}")
-
         with _SL():
-            with ObserverContext() as ctx:
-                try:
-                    await self._connection.begin()
+            with _SL():
+                if not hasattr(self.connection, "connected_time"):
+                    await self.connection._connect()  # pylint: disable=protected-access
 
-                    for observer in self.observers:
-                        self.observer_context[id(observer)] = observer.observe_transaction_start(self, **ctx.kwargs())
+                self._transaction_initiated = True
 
-                # pylint: disable=broad-exception-caught
-                except Exception as exc:
-                    _query_error_factory("BEGIN", exc, self._connection)
+            if self._isolation_level is not None:
+                await self._connection.query(f"SET TRANSACTION ISOLATION LEVEL {self._isolation_level.value}")
+
+            with _SL(2):
+                with ObserverContext() as ctx:
+                    try:
+                        await self._connection.begin()
+
+                        for observer in self.observers:
+                            self.observer_context[id(observer)] = observer.observe_transaction_start(self, **ctx.kwargs())
+
+                    # pylint: disable=broad-exception-caught
+                    except Exception as exc:
+                        _query_error_factory("BEGIN", exc, self._connection)
 
     async def is_committed(self) -> bool:
         """
@@ -483,7 +496,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             result set.
         :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error processing the query.
         """
-        with _SL(2):
+        with _SL(3):
             await self._check_transaction_open(query)
 
             if not self._cursor_clean:
