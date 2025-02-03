@@ -72,6 +72,9 @@ class AioMySQLConnection(aiomysql.Connection):
         server_public_key: Optional[str] = None,
         remote_app: str = "",
         timezone: Optional[datetime.tzinfo] = datetime.timezone.utc,
+        read_timeout: Optional[int] = None,
+        write_timeout: Optional[int] = None,
+        wait_timeout: Optional[int] = None,
     ) -> None:
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         """
@@ -106,6 +109,9 @@ class AioMySQLConnection(aiomysql.Connection):
         :param timezone: Timezone configured for the connection. It is set as connection attribute, so database will know
             what timezone it should accept. Also it is used to populate the tzinfo attribute of datetime objects.
             When None, naive datetimes are used and no timezone information is sent to the database. (default: UTC)
+        :param read_timeout: Timeout (in seconds) for waiting for MySQL to process query and return result. (default: None)
+        :param write_timeout: Timeout (in seconds) for sending data to MySQL server (default: None)
+        :param wait_timeout: Timeout (in seconds) for closing the connection when idle. (default: None)
         """
 
         if conv is None:
@@ -125,6 +131,15 @@ class AioMySQLConnection(aiomysql.Connection):
                     minutes = (offset.seconds // 60) % 60
 
                     init_command = f"SET time_zone='{hours:+03d}:{minutes:02d}'; {init_command or ''}"
+
+        if read_timeout is not None:
+            init_command = f"SET net_read_timeout={read_timeout}; {init_command or ''}"
+
+        if write_timeout is not None:
+            init_command = f"SET net_write_timeout={write_timeout}; {init_command or ''}"
+
+        if wait_timeout is not None:
+            init_command = f"SET wait_timeout={wait_timeout}; {init_command or ''}"
 
         super().__init__(
             host,

@@ -75,7 +75,12 @@ class MySQLConfigProtocol(Protocol):
     is failed and connection closed from the side of MySQL server.
     """
 
-    remote_app: Optional[str]
+    wait_timeout: Optional[int] = None
+    """
+    Timeout (in seconds) for the connection to be idle before it is closed by the server.
+    """
+
+    remote_app: Optional[str] = None
     """
     Name of the connection to the database. This is used for logging purposes to distinguish between different connections.
 
@@ -113,5 +118,6 @@ class MySQLConfig(MySQLConfigProtocol):  # pylint: disable=too-many-instance-att
     connect_timeout: int = 1
     read_timeout: int = 60
     write_timeout: int = 60
+    wait_timeout: Optional[int] = None
     remote_app: Optional[str] = None
     timezone: Optional[tzinfo] = timezone.utc

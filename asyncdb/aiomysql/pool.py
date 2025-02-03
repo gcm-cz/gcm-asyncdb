@@ -55,7 +55,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
     @property
     def remote_app(self) -> str:
         """Remote application identifier for the connections in the pool."""
-        if self.config.remote_app is None:
+        if not hasattr(self.config, "remote_app") or self.config.remote_app is None:
             return f"{self.config.user}@{self.config.host}:{self.config.port}/{self.config.database}"
 
         return self.config.remote_app
@@ -65,26 +65,43 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         Create new connection.
         :return: Created connection.
         """
-        conn: AioMySQLConnection = self.connection_class(
-            host=self.config.host,
-            port=self.config.port,
-            user=self.config.user,
-            password=self.config.password,
-            db=self.config.database,
-            charset=self.config.charset,
-            autocommit=False,
-            use_unicode=True,
-            connect_timeout=self.config.connect_timeout,
-            timezone=self.config.timezone,
-            init_command=f"SET net_read_timeout={self.config.read_timeout}; SET net_write_timeout={self.config.write_timeout};",
-        )
+        try:
+            kwargs: dict[str, Any] = {}
 
-        for observer in self._connection_observers or []:
-            conn.attach(observer)
+            if hasattr(self.config, "timezone"):
+                kwargs["timezone"] = self.config.timezone
 
-        conn.logger.debug(
-            "Connecting to mysql://%s@%s:%d/%s", self.config.user, self.config.host, self.config.port, self.config.database
-        )
+            if hasattr(self.config, "read_timeout"):
+                kwargs["read_timeout"] = self.config.read_timeout
+
+            if hasattr(self.config, "write_timeout"):
+                kwargs["write_timeout"] = self.config.write_timeout
+
+            if hasattr(self.config, "wait_timeout"):
+                kwargs["wait_timeout"] = self.config.wait_timeout
+
+            conn: AioMySQLConnection = self.connection_class(
+                host=self.config.host,
+                port=self.config.port,
+                user=self.config.user,
+                password=self.config.password,
+                db=self.config.database,
+                charset=self.config.charset,
+                autocommit=False,
+                use_unicode=True,
+                connect_timeout=self.config.connect_timeout,
+                **kwargs,
+            )
+
+            for observer in self._connection_observers or []:
+                conn.attach(observer)
+
+            conn.logger.debug(
+                "Connecting to mysql://%s@%s:%d/%s", self.config.user, self.config.host, self.config.port, self.config.database
+            )
+        except Exception as exc:
+            self.log.exception("Unable to create connection: %r", exc)
+            raise
 
         with _SL(3):
             with ObserverContext(logger=logger.getChild("mysql.startup")):
