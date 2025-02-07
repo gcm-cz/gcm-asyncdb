@@ -65,8 +65,8 @@ class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         Close the connection. This is here to provide predictable interface, as connection class might not
         provide close() method.
         """
-        if hasattr(super(), "close"):
-            return super().close()
+        if hasattr(self.__wrapped__, "close"):
+            return self.__wrapped__.close()
 
         return None
 
@@ -116,7 +116,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         finally:
             await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection))
 
-    if TYPE_CHECKING:
+    if TYPE_CHECKING:  # pragma: no cover
 
         async def is_committed(self) -> bool:
             # pylint: disable=unnecessary-ellipsis, no-self-use
@@ -740,7 +740,7 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
     @classmethod
     def create(cls, *args: Any, **kwargs: Any) -> DatabaseConnectionPool[ConnectionTypeT, TransactionTypeT]:
         """
-        Create new connection pool.
+        Create new connection pool or return existing one from cache. The caching is done on the basis of arguments.
         :param args: Arguments passed to the connection pool constructor.
         :param kwargs: Keyword arguments passed to the connection pool constructor.
         :return: Created connection pool.
@@ -762,15 +762,17 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         self.transaction_class = transaction_class
         """Class used to create transaction instances."""
 
-    async def get_transaction(self, *, stacklevel: int = 1) -> TransactionTypeT:
+    async def get_transaction(self, *args: Any, stacklevel: int = 1, **kwargs: Any) -> TransactionTypeT:
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
+        :param args: Optional args to the transaction class constructor.
         :param stacklevel: Stack level to skip when logging.
+        :param kwargs: Optional kwargs to the transaction class constructor.
         :return: Instance of transaction class.
         """
         conn = await self.get_conn(stacklevel + 1)
-        trans = PooledTransaction(self.transaction_class(conn), pool=self)
+        trans = PooledTransaction(self.transaction_class(conn, *args, **kwargs), pool=self)
         conn.current_transaction = trans
 
         # PooledTransaction is not really a TransactionTypeT, but it is object wrapper that acts like it is. For better
@@ -811,8 +813,8 @@ class ConnectionPoolSingleton(Generic[T]):
 
 @asynccontextmanager
 async def transaction(
-    pool: DatabaseConnectionPool[ConnectionTypeT, Transaction[ConnectionTypeT]],
-) -> AsyncGenerator[Transaction[ConnectionTypeT], None]:
+    pool: DatabaseConnectionPool[ConnectionTypeT, TransactionTypeT],
+) -> AsyncGenerator[TransactionTypeT, None]:
     """
     Return database transaction from the pool as async context.
     """

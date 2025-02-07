@@ -1,13 +1,13 @@
 import asyncio
 from collections.abc import Collection
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional, Type, cast
+from typing import Any, AsyncGenerator, Optional, Type
 
 import aiomysql
 
 from .. import logger
 from .._sl import _SL
-from ..pool import CountedConnection, DatabaseConnectionPool, PooledTransaction
+from ..pool import CountedConnection, DatabaseConnectionPool
 from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
 from .observer import ObserverContext, QueryObserver, TransactionObserver
@@ -52,6 +52,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
             **kwargs,
         )
 
+        self._health_logger = self.log.getChild("health")
+
     @property
     def remote_app(self) -> str:
         """Remote application identifier for the connections in the pool."""
@@ -65,50 +67,56 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         Create new connection.
         :return: Created connection.
         """
-        try:
-            kwargs: dict[str, Any] = {}
+        with _SL(3) as sl:
+            try:
+                kwargs: dict[str, Any] = {}
 
-            if hasattr(self.config, "timezone"):
-                kwargs["timezone"] = self.config.timezone
+                if hasattr(self.config, "timezone"):
+                    kwargs["timezone"] = self.config.timezone
 
-            if hasattr(self.config, "read_timeout"):
-                kwargs["read_timeout"] = self.config.read_timeout
+                if hasattr(self.config, "read_timeout"):
+                    kwargs["read_timeout"] = self.config.read_timeout
 
-            if hasattr(self.config, "write_timeout"):
-                kwargs["write_timeout"] = self.config.write_timeout
+                if hasattr(self.config, "write_timeout"):
+                    kwargs["write_timeout"] = self.config.write_timeout
 
-            if hasattr(self.config, "wait_timeout"):
-                kwargs["wait_timeout"] = self.config.wait_timeout
+                if hasattr(self.config, "wait_timeout"):
+                    kwargs["wait_timeout"] = self.config.wait_timeout
 
-            conn: AioMySQLConnection = self.connection_class(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-                db=self.config.database,
-                charset=self.config.charset,
-                autocommit=False,
-                use_unicode=True,
-                connect_timeout=self.config.connect_timeout,
-                **kwargs,
-            )
+                conn: AioMySQLConnection = self.connection_class(
+                    host=self.config.host,
+                    port=self.config.port,
+                    user=self.config.user,
+                    password=self.config.password,
+                    db=self.config.database,
+                    charset=self.config.charset,
+                    autocommit=False,
+                    use_unicode=True,
+                    connect_timeout=self.config.connect_timeout,
+                    remote_app=self.remote_app,
+                    **kwargs,
+                )
 
-            for observer in self._connection_observers or []:
-                conn.attach(observer)
+                for observer in self._connection_observers or []:
+                    conn.attach(observer)
 
-            conn.logger.debug(
-                "Connecting to mysql://%s@%s:%d/%s", self.config.user, self.config.host, self.config.port, self.config.database
-            )
-        except Exception as exc:
-            self.log.exception("Unable to create connection: %r", exc)
-            raise
+                conn.logger.debug(
+                    "Connecting to mysql://%s@%s:%d/%s",
+                    self.config.user,
+                    self.config.host,
+                    self.config.port,
+                    self.config.database,
+                    stacklevel=sl.get()
+                )
+            except Exception as exc:
+                self.log.exception("Unable to create connection: %r", exc)
+                raise
 
-        with _SL(3):
             with ObserverContext(logger=logger.getChild("mysql.startup")):
                 try:
                     # pylint: disable=protected-access
                     await asyncio.wait_for(conn._connect(), self.config.connect_timeout)
-                    conn.logger.debug("Connected!")
+                    conn.logger.debug("Connected!", stacklevel=sl.get())
                     return conn
                 except (aiomysql.OperationalError, asyncio.TimeoutError) as exc:
                     if hasattr(exc, "__cause__") and exc.__cause__:
@@ -116,12 +124,13 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
                             "Connection failed with %s (caused by %s)",
                             str(exc) or exc.__class__.__name__,
                             str(exc.__cause__) or exc.__cause__.__class__.__name__,
+                            stacklevel=sl.get()
                         )
                     else:
-                        conn.logger.error("Connection failed with %s", str(exc) or exc.__class__.__name__)
+                        conn.logger.error("Connection failed with %s", str(exc) or exc.__class__.__name__, stacklevel=sl.get())
                     raise
                 except Exception as exc:
-                    conn.logger.exception(exc)
+                    conn.logger.exception(exc, stacklevel=sl.get())
                     raise
 
     async def check_conn(self, conn: CountedConnection[AioMySQLConnection]) -> bool:
@@ -132,15 +141,13 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :return: True if connection is healthy and ready to be used for next transaction, False if it should be
           discarded.
         """
-        health_logger = self.log.getChild("health")
-
         try:
-            await conn.query("SELECT 1", logger=health_logger)
+            await conn.query("SELECT 1", logger=self._health_logger)
             return True
 
         # pylint: disable=broad-except  # Because that is exactly what we want to do.
         except Exception as exc:
-            health_logger.error("%s: %s", exc.__class__.__qualname__, exc)
+            self._health_logger.error("%s: %s", exc.__class__.__qualname__, exc)
             return False
 
     async def close_conn(self, conn: AioMySQLConnection) -> None:
@@ -151,7 +158,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         self.log.debug("Closing connection %r.", conn)
         await conn.ensure_closed()
 
-    async def get_transaction(
+    async def get_transaction(  # type: ignore[override]
         self,
         isolation_level: Optional[TransactionIsolationLevel] = None,
         *,
@@ -164,19 +171,24 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :param stacklevel: Stack level to skip when logging.
         :return: Instance of transaction class.
         """
-        conn = await self.get_conn(stacklevel + 1)
-        trans = PooledTransaction(self.transaction_class(conn, isolation_level, observers=self._transaction_observers), pool=self)
-        conn.current_transaction = trans
-
-        return cast(Transaction, trans)
+        return await super().get_transaction(
+            isolation_level=isolation_level,
+            stacklevel=stacklevel + 1,
+            observers=self._transaction_observers
+        )
 
 
 @asynccontextmanager
 async def transaction(
-    pool: MySQLConnectionPool, isolation_level: Optional[TransactionIsolationLevel]
+        pool: MySQLConnectionPool,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        timeout: Optional[float] = None
 ) -> AsyncGenerator[Transaction, None]:
     """
     Return database transaction from the pool as async context.
     """
-    async with await pool.get_transaction(isolation_level) as trans:
+    async with await asyncio.wait_for(
+            pool.get_transaction(isolation_level=isolation_level),
+            timeout or pool.config.connect_timeout
+    ) as trans:
         yield trans

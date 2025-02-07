@@ -9,9 +9,10 @@ import pytest
 from asyncdb import LogicError, ResultRow, ObjectFetcher
 from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, MySQLConfig, \
     TransactionIsolationLevel
+from asyncdb.aiomysql.pool import transaction
 from asyncdb.aiomysql.result import BoolResult
-from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError
-
+from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError, Error, EntityNotFound, DuplicateEntry
+from asyncdb.pool import transaction as generic_transaction
 
 config = MySQLConfig(
     host=os.getenv("TEST_MYSQL_HOST", "localhost"),
@@ -41,7 +42,7 @@ def catch_queries():
 
 
 @pytest.fixture(scope="function")
-def connection(catch_queries):
+async def connection(catch_queries):
     conn = AioMySQLConnection(
         host=config.host,
         port=config.port,
@@ -50,7 +51,10 @@ def connection(catch_queries):
         db=config.database,
     )
     conn.attach(catch_queries)
-    return conn
+
+    yield conn
+
+    await conn.ensure_closed()
 
 
 @pytest.fixture(scope="function")
@@ -67,8 +71,8 @@ async def factory(catch_queries):
     TransactionFactory._pool_cache.clear()
 
 @pytest.fixture(scope="function")
-def connection_naive_dt():
-    return AioMySQLConnection(
+async def connection_naive_dt():
+    conn = AioMySQLConnection(
         host=config.host,
         port=config.port,
         user=config.user,
@@ -76,6 +80,9 @@ def connection_naive_dt():
         db=config.database,
         timezone=None,
     )
+
+    yield conn
+    await conn.ensure_closed()
 
 
 @pytest.mark.asyncio
@@ -187,7 +194,7 @@ async def test_errors(connection, caplog):
 
 
 @pytest.mark.asyncio
-async def test_bool_result(connection, caplog):
+async def test_bool_result_basic(connection, caplog):
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             q = await transaction.query("COMMIT")
@@ -196,6 +203,26 @@ async def test_bool_result(connection, caplog):
 
     for record in caplog.records:
         assert record.filename == "test_connection.py"
+
+
+@pytest.mark.asyncio
+async def test_bool_result_access(connection):
+    async with Transaction(connection) as trx:
+        res = await trx.query("COMMIT")
+
+        assert isinstance(res, BoolResult)
+        assert bool(res) is True
+
+        with pytest.raises(Error):
+            async for row in res.fetch_all_dict():
+                assert False, "Should not return anything!"
+
+        with pytest.raises(Error):
+            async for row in res.fetch_all_list():
+                assert False, "Should not return anything!"
+
+        with pytest.raises(Error):
+            await res.fetch_all_scalar()
 
 
 @pytest.mark.asyncio
@@ -317,6 +344,11 @@ async def test_fetch_object(connection):
     assert rows[0].a == 1
     assert rows[1].a == 2
     assert rows[2].a == 3
+
+    # Access to non-existing column returns None.
+    assert rows[0].b is None
+
+    assert repr(rows[0]) == "<ResultRow a=1>"
 
 
 @dataclass
@@ -512,3 +544,87 @@ async def test_transaction_isolation_level(connection, caplog):
 
         if "BEGIN" in record.message or "COMMIT" in record.message:
             assert record.filename == "test_connection.py"
+
+
+@pytest.mark.asyncio
+async def test_query_with_unknown_args(connection):
+    with pytest.raises(TypeError):
+        async with Transaction(connection) as trx:
+            await trx.query("SELECT %s")
+
+
+@pytest.mark.asyncio
+async def test_factory_call(factory):
+    trx = await anext(factory())
+    assert isinstance(trx, Transaction)
+
+
+@pytest.mark.asyncio
+async def test_transaction_function(factory):
+    async with transaction(factory.pool) as trx:
+        assert isinstance(trx, Transaction)
+
+
+@pytest.mark.asyncio
+async def test_generic_transaction_function(factory):
+    async with generic_transaction(factory.pool) as trx:
+        assert isinstance(trx, Transaction)
+
+
+@pytest.mark.asyncio
+async def test_iterate_result_set(connection):
+    async with Transaction(connection) as trx:
+        res = await trx.query("SELECT 1; SELECT 1;")
+        assert await res.fetch_all_scalar() == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_discard_result(connection):
+    async with Transaction(connection) as trx:
+        res = await trx.query("SELECT 1; SELECT 1;")
+        await res.close()
+
+        await trx.query("SELECT 1")  # Should not raise exception
+
+
+@pytest.mark.asyncio
+async def test_result_not_discarded(connection):
+    async with Transaction(connection) as trx:
+        res = await trx.query("SELECT 1; SELECT 1;")
+
+        with pytest.raises(LogicError):
+            await trx.query("SELECT 1")
+
+        await res.close()
+
+        await trx.query("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_entity_not_found(connection):
+    async with Transaction(connection) as trx:
+        await trx.query("CREATE TEMPORARY TABLE `test` (`id` INT PRIMARY KEY, `name` VARCHAR(255))")
+        await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")
+
+        with pytest.raises(EntityNotFound):
+            await trx.get_scalar("SELECT `id` FROM `test` WHERE `id` = 3")
+
+        with pytest.raises(EntityNotFound):
+            await trx.get_dict("SELECT `id` FROM `test` WHERE `id` = 3")
+
+        with pytest.raises(EntityNotFound):
+            await trx.get_list("SELECT `id` FROM `test` WHERE `id` = 3")
+
+        with pytest.raises(EntityNotFound):
+            await trx.get_object("SELECT `id` FROM `test` WHERE `id` = 3")
+
+
+
+@pytest.mark.asyncio
+async def test_duplicate_entry(connection):
+    async with Transaction(connection) as trx:
+        await trx.query("CREATE TEMPORARY TABLE `test` (`id` INT PRIMARY KEY, `name` VARCHAR(255))")
+        await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")
+
+        with pytest.raises(DuplicateEntry):
+            await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")

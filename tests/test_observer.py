@@ -8,14 +8,16 @@ from .test_connection import config
 
 
 @pytest.fixture(scope="function")
-def connection():
-    return AioMySQLConnection(
+async def connection():
+    conn = AioMySQLConnection(
         host=config.host,
         port=config.port,
         user=config.user,
         password=config.password,
         db=config.database,
     )
+    yield conn
+    await conn.ensure_closed()
 
 
 class TestQueryObserver(QueryObserver):
@@ -148,6 +150,8 @@ async def test_query_observer_from_factory():
             assert observer.after is False
             assert observer.error is True
     finally:
+        for pool in TransactionFactory._pool_cache.values():
+            await pool.close()
         TransactionFactory._pool_cache.clear()
 
 
@@ -256,4 +260,7 @@ async def test_transaction_observer_factory():
         assert observer.after is True
         assert observer.error is False
     finally:
+        for pool in TransactionFactory._pool_cache.values():
+            await pool.close()
+
         TransactionFactory._pool_cache.clear()

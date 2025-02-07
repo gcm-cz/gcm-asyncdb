@@ -152,7 +152,8 @@ class TransactionFactory:
     async def __call__(self) -> AsyncGenerator[Transaction, None]:
         """
         Yields transaction instance from one of the pool connections. Uses default configuration from the factory
-        regarding timeout and transaction isolation level.
+        regarding timeout and transaction isolation level. This is mainly usefull as FastAPI dependency, as it does
+        not generate any additional dependencies, that might get propagated all the way to the end user's documentation.
 
         Example:
 
@@ -169,8 +170,6 @@ class TransactionFactory:
         >>>     out = [row async for row in q.fetch_all_dict()]
         >>>     await trx.commit()
         >>>     return out
-
-        :return:
         """
         async with await asyncio.wait_for(self.pool.get_transaction(self.isolation_level), self.config.connect_timeout) as trx:
             yield trx

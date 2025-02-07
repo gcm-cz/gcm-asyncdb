@@ -4,11 +4,14 @@ import pytest
 import pytest_asyncio
 
 from asyncdb.aiomysql import MySQLConfig, MySQLConnectionPool
+from asyncdb.exceptions import QueryError
 
 
 @pytest_asyncio.fixture
 async def pool():
-    return MySQLConnectionPool(MySQLConfig(max_spare_conns=5, min_spare_conns=3), keeper_task=False)
+    pool = MySQLConnectionPool(MySQLConfig(max_spare_conns=5, min_spare_conns=3), keeper_task=False)
+    yield pool
+    await pool.close()
 
 
 def test_pool_init_errors():
@@ -118,6 +121,8 @@ async def test_pool_depletion():
     assert pool.current_pool_size == 1
     assert pool.current_pool_free == 1
 
+    await pool.close()
+
 
 @pytest.mark.asyncio
 async def test_pool_discard_conns():
@@ -129,30 +134,74 @@ async def test_pool_discard_conns():
 
     async with await pool.get_transaction() as trx1:
         assert trx1.connection.used == 1
+        assert pool.connections_in_use == 1
         first_conn = trx1.connection
         await trx1.rollback()
 
+    assert pool.connections_in_use == 0
     assert pool.current_pool_size == 1
     assert pool.current_pool_free == 1
+    assert bool(pool) is True
 
     await pool._keeper_task_iteration()
 
     async with await pool.get_transaction() as trx2:
+        assert pool.connections_in_use == 1
         assert trx2.connection.used == 2
         assert trx2.connection is first_conn
         await trx2.rollback()
 
+    assert pool.connections_in_use == 0
     assert pool.current_pool_size == 0
     assert pool.current_pool_free == 0
+    assert bool(pool) is False
 
     await pool._keeper_task_iteration()
 
     async with await pool.get_transaction() as trx3:
+        assert pool.connections_in_use == 1
         assert trx3.connection.used == 1
         assert trx3.connection is not first_conn
         await trx3.rollback()
 
     await pool._keeper_task_iteration()
 
+    assert pool.connections_in_use == 0
     assert pool.current_pool_size == 1
     assert pool.current_pool_free == 1
+
+    await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_app():
+    pool = MySQLConnectionPool(MySQLConfig(max_pool_size=1, remote_app="test-remote-app"), keeper_task=False)
+    await pool._keeper_task_iteration()
+
+    # Pool has remote app
+    assert pool.remote_app == "test-remote-app", "Pool remote app is missing."
+
+    async with await pool.get_transaction() as trx:
+        # Connection has remote app
+        assert trx.connection.remote_app == "test-remote-app", "Connection remote app is missing."
+
+        # Transaction has remote app
+        assert trx.remote_app == "test-remote-app", "Transaction remote app is missing."
+
+        try:
+            await trx.query("SELECT INVALID")
+        except QueryError as exc:
+            # Exception has remote app
+            assert exc.remote_app == "test-remote-app", "Exception remote app is missing."
+
+    await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_pool_connect_error(caplog):
+    pool = MySQLConnectionPool(MySQLConfig(max_pool_size=1, host="invalid-host"), keeper_task=False)
+    await pool._keeper_task_iteration()
+
+    assert "Connection failed with" in caplog.text
+
+    await pool.close()
