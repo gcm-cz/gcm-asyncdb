@@ -1,0 +1,224 @@
+- case: get_object
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection
+    from asyncdb import ResultRow
+    from typing import assert_type, Coroutine, Any
+    from dataclasses import dataclass
+    
+    trx = Transaction(AioMySQLConnection())
+    
+    @dataclass
+    class CustomObject:
+        pass
+    
+    def factory() -> CustomObject:
+        return CustomObject()
+    
+    assert_type(trx.get_object("", []), Coroutine[Any, Any, ResultRow])  # type: ignore[unused-coroutine]
+    assert_type(trx.get_object("", [], CustomObject), Coroutine[Any, Any, CustomObject])  # type: ignore[unused-coroutine]
+    assert_type(trx.get_object("", [], factory), Coroutine[Any, Any, CustomObject])  # type: ignore[unused-coroutine]
+- case: get_dict
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection
+    from typing import assert_type, Coroutine, Any
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+
+    class mydict(dict):
+      pass
+
+    assert_type(trx.get_dict("", []), Coroutine[Any, Any, dict[str, Any]])  # type: ignore[unused-coroutine]
+    assert_type(trx.get_dict("", [], mydict), Coroutine[Any, Any, mydict])  # type: ignore[unused-coroutine]
+- case: get_list
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection
+    from typing import assert_type, Coroutine, Any
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+
+    class mylist(list):
+      pass
+
+    assert_type(trx.get_list("", []), Coroutine[Any, Any, list])  # type: ignore[unused-coroutine]
+    assert_type(trx.get_list("", [], mylist), Coroutine[Any, Any, mylist])  # type: ignore[unused-coroutine]
+- case: fetch_object
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from asyncdb import ResultRow
+    from typing import assert_type, Coroutine, Any, Optional
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    @dataclass
+    class CustomObject:
+        pass
+
+    def factory() -> CustomObject:
+        return CustomObject()
+
+    res = Result(trx, c, "")
+    
+    assert_type(res.fetch_object(), Coroutine[Any, Any, Optional[ResultRow]])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_object(CustomObject), Coroutine[Any, Any, Optional[CustomObject]])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_object(factory), Coroutine[Any, Any, Optional[CustomObject]])  # type: ignore[unused-coroutine]
+- case: fetch_dict
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from typing import assert_type, Coroutine, Any, Optional
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    class mydict(dict):
+      pass
+
+    res = Result(trx, c, "")
+
+    assert_type(res.fetch_dict(), Coroutine[Any, Any, Optional[dict[str, Any]]])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_dict(mydict), Coroutine[Any, Any, Optional[mydict]])  # type: ignore[unused-coroutine]
+- case: fetch_list
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from typing import assert_type, Coroutine, Any, Optional
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    class mylist(list):
+      pass
+
+    res = Result(trx, c, "")
+
+    assert_type(res.fetch_list(), Coroutine[Any, Any, Optional[list]])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_list(mylist), Coroutine[Any, Any, Optional[mylist]])  # type: ignore[unused-coroutine]
+- case: fetch_all_object
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from asyncdb import ResultRow
+    from typing import assert_type, Coroutine, Any, AsyncGenerator
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    @dataclass
+    class CustomObject:
+        pass
+
+    def factory() -> CustomObject:
+        return CustomObject()
+
+    res = Result(trx, c, "")
+    
+    assert_type(res.fetch_all_object(), AsyncGenerator[ResultRow, None])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_all_object(CustomObject), AsyncGenerator[CustomObject, None])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_all_object(factory), AsyncGenerator[CustomObject, None])  # type: ignore[unused-coroutine]
+- case: fetch_all_dict
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from typing import assert_type, Coroutine, Any, AsyncGenerator
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    class mydict(dict):
+      pass
+
+    res = Result(trx, c, "")
+
+    assert_type(res.fetch_all_dict(), AsyncGenerator[dict[str, Any], None])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_all_dict(mydict), AsyncGenerator[mydict, None])  # type: ignore[unused-coroutine]
+- case: fetch_all_list
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from typing import assert_type, Coroutine, Any, AsyncGenerator
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    class mylist(list):
+      pass
+
+    res = Result(trx, c, "")
+
+    assert_type(res.fetch_all_list(), AsyncGenerator[list, None])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_all_list(mylist), AsyncGenerator[mylist, None])  # type: ignore[unused-coroutine]
+- case: fetch_all_scalar
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import Transaction, AioMySQLConnection, Result
+    from asyncdb.aiomysql.cursor import Cursor
+    from typing import assert_type, Coroutine, Any, AsyncGenerator
+    from dataclasses import dataclass
+
+    trx = Transaction(AioMySQLConnection())
+    c = Cursor(AioMySQLConnection())
+
+    class mylist(list):
+      pass
+
+    res = Result(trx, c, "")
+
+    assert_type(res.fetch_all_scalar(), Coroutine[Any, Any, list])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_all_scalar(set), Coroutine[Any, Any, set])  # type: ignore[unused-coroutine]
+    assert_type(res.fetch_all_scalar(mylist), Coroutine[Any, Any, mylist])  # type: ignore[unused-coroutine]
+- case: transaction_factory
+  mypy_config: |
+    follow_untyped_imports = false
+    follow_imports = silent
+  main: |
+    from asyncdb.aiomysql import TransactionFactory, MySQLConfig, Transaction, Result
+    from typing import Coroutine, Any
+    
+    f = TransactionFactory(MySQLConfig())
+    
+    async def test():
+      async with f.transaction() as trx:
+        assert_type(trx, Transaction)
+        assert_type(trx.query(""), Coroutine[Any, Any, Result])
+    
+      async with await anext(f()) as trx:
+        assert_type(trx, Transaction)
