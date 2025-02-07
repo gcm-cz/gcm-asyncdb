@@ -106,7 +106,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
                     self.config.host,
                     self.config.port,
                     self.config.database,
-                    stacklevel=sl.get()
+                    stacklevel=sl.get(),
                 )
             except Exception as exc:
                 self.log.exception("Unable to create connection: %r", exc)
@@ -124,7 +124,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
                             "Connection failed with %s (caused by %s)",
                             str(exc) or exc.__class__.__name__,
                             str(exc.__cause__) or exc.__cause__.__class__.__name__,
-                            stacklevel=sl.get()
+                            stacklevel=sl.get(),
                         )
                     else:
                         conn.logger.error("Connection failed with %s", str(exc) or exc.__class__.__name__, stacklevel=sl.get())
@@ -164,6 +164,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         *,
         stacklevel: int = 1,
     ) -> Transaction:
+        # pylint: disable=arguments-differ
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
@@ -172,23 +173,20 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :return: Instance of transaction class.
         """
         return await super().get_transaction(
-            isolation_level=isolation_level,
-            stacklevel=stacklevel + 1,
-            observers=self._transaction_observers
+            isolation_level=isolation_level, stacklevel=stacklevel + 1, observers=self._transaction_observers
         )
 
 
 @asynccontextmanager
 async def transaction(
-        pool: MySQLConnectionPool,
-        isolation_level: Optional[TransactionIsolationLevel] = None,
-        timeout: Optional[float] = None
+    pool: MySQLConnectionPool,
+    isolation_level: Optional[TransactionIsolationLevel] = None,
+    timeout: Optional[float] = None,  # noqa: ASYNC109
 ) -> AsyncGenerator[Transaction, None]:
     """
     Return database transaction from the pool as async context.
     """
     async with await asyncio.wait_for(
-            pool.get_transaction(isolation_level=isolation_level),
-            timeout or pool.config.connect_timeout
+        pool.get_transaction(isolation_level=isolation_level), timeout or pool.config.connect_timeout
     ) as trans:
         yield trans
