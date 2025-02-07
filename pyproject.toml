@@ -42,6 +42,7 @@ pylint = "^3"
 mypy = "^1"
 ruff = "^0"
 pdoc = "^15.0.1"
+pytest-cov = "^6.0.0"
 
 [build-system]
 requires = ["poetry-core"]
