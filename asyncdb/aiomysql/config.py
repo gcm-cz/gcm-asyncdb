@@ -42,19 +42,19 @@ class MySQLConfigProtocol(Protocol):
     min_spare_conns: int
     """ Minimum spare connections to keep in the pool ready to use. Up to `max_pool_size` connections can be created. """
 
-    max_conn_lifetime: int
+    max_conn_lifetime: Optional[int]
     """
     Maximum lifetime of a connection in seconds. After this time, the connection is discarded and potentially replaced with new
     one when needed.
     """
 
-    max_conn_usage: int
+    max_conn_usage: Optional[int]
     """
     Maximum number of transactions this connection can handle. After exceeding the usage count, the connection is discarded
     and potentially replaced with new one when needed.
     """
 
-    connect_timeout: int
+    connect_timeout: Optional[int] = None
     """
     Timeout (in seconds) for the connection to be established. If the connection is not established in this time, the
     connection is considered failed and new attempt will be made.
@@ -63,13 +63,13 @@ class MySQLConfigProtocol(Protocol):
     in the transaction call.
     """
 
-    read_timeout: int
+    read_timeout: Optional[int] = None
     """
     Timeout (in seconds) for the query to be executed. If the query is not completed within this time frame, TimeoutError
     is raised.
     """
 
-    write_timeout: int
+    write_timeout: Optional[int] = None
     """
     Timeout (in seconds) for the query to be transfered from client to server. When the transfer time is longer, the query
     is failed and connection closed from the side of MySQL server.
@@ -113,11 +113,11 @@ class MySQLConfig(MySQLConfigProtocol):  # pylint: disable=too-many-instance-att
     max_pool_size: int = 100
     max_spare_conns: int = 10
     min_spare_conns: int = 5
-    max_conn_lifetime: int = 300
-    max_conn_usage: int = 100
-    connect_timeout: int = 1
-    read_timeout: int = 60
-    write_timeout: int = 60
+    max_conn_lifetime: Optional[int] = 300
+    max_conn_usage: Optional[int] = 100
+    connect_timeout: Optional[int] = 1
+    read_timeout: Optional[int] = 60
+    write_timeout: Optional[int] = 60
     wait_timeout: Optional[int] = None
     remote_app: Optional[str] = None
     timezone: Optional[tzinfo] = timezone.utc

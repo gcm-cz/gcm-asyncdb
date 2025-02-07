@@ -343,8 +343,8 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         max_pool_size: int = 100,
         max_spare_conns: int = 10,
         min_spare_conns: int = 5,
-        max_conn_lifetime: int = 300,
-        max_conn_usage: int = 100,
+        max_conn_lifetime: Optional[int] = 300,
+        max_conn_usage: Optional[int] = 100,
         keeper_task: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -367,10 +367,10 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         max_spare_conns = min(max_spare_conns, max_pool_size)
         min_spare_conns = min(min_spare_conns, max_spare_conns)
 
-        if max_conn_lifetime < 0:
+        if max_conn_lifetime is not None and max_conn_lifetime < 0:
             raise AttributeError("max_conn_lifetime must be greater or equal to zero")
 
-        if max_conn_usage < 0:
+        if max_conn_usage is not None and max_conn_usage < 0:
             raise AttributeError("max_conn_usage must be greater or equal to zero")
 
         self.connection_class = connection_class
