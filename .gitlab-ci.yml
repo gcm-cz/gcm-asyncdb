@@ -96,7 +96,6 @@ release-wheel-official:
   script:
       - /ci/release-wheel.sh
 
-
 release:
     image: registry.gitlab.com/gitlab-org/release-cli:latest
     stage: release

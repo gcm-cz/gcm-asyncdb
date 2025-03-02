@@ -117,20 +117,21 @@ class AioMySQLConnection(aiomysql.Connection):
         if conv is None:
             conv = decoders.copy()
 
-            if timezone is not None:
-                # Produce timezone-aware datetimes with specified timezone information.
-                def convert_datetime_with_tz(obj: Any) -> datetime.datetime:
-                    return cast(datetime.datetime, convert_datetime(obj)).replace(tzinfo=self.timezone)
+        if timezone is not None:
+            # Produce timezone-aware datetimes with specified timezone information.
+            def convert_datetime_with_tz(obj: Any) -> datetime.datetime:
+                return cast(datetime.datetime, convert_datetime(obj)).replace(tzinfo=self.timezone)
 
-                conv[FIELD_TYPE.DATETIME] = convert_datetime_with_tz
+            conv[FIELD_TYPE.DATETIME] = convert_datetime_with_tz
+            conv[FIELD_TYPE.TIMESTAMP] = convert_datetime_with_tz
 
-                # Set correct timezone for the connection too.
-                offset = timezone.utcoffset(datetime.datetime.now())  # noqa: DTZ005  # We want local time here.
-                if offset is not None:
-                    hours = offset.seconds // 3600
-                    minutes = (offset.seconds // 60) % 60
+            # Set correct timezone for the connection too.
+            offset = timezone.utcoffset(datetime.datetime.now())  # noqa: DTZ005  # We want local time here.
+            if offset is not None:
+                hours = offset.seconds // 3600
+                minutes = (offset.seconds // 60) % 60
 
-                    init_command = f"SET time_zone='{hours:+03d}:{minutes:02d}'; {init_command or ''}"
+                init_command = f"SET time_zone='{hours:+03d}:{minutes:02d}'; {init_command or ''}"
 
         if read_timeout is not None:
             init_command = f"SET net_read_timeout={read_timeout}; {init_command or ''}"
@@ -196,6 +197,17 @@ class AioMySQLConnection(aiomysql.Connection):
     async def _connect(self) -> None:
         with _SL():
             await super()._connect()
+
+    def escape(self, obj: Any) -> str:
+        """Escape a value to be used in a query."""
+
+        # Encode timezone-aware datetime with correct timezone.
+        if isinstance(obj, datetime.datetime) and self.timezone is not None and obj.tzinfo is not None:
+            print(obj)
+            obj = obj.astimezone(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
+            print(obj)
+
+        return super().escape(obj)
 
     def observe_query_before(self, sql: str, **kwargs: Any) -> dict[int, Any]:
         """

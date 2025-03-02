@@ -44,6 +44,7 @@ ruff = "^0"
 pdoc = "^15.0.1"
 pytest-cov = "^6.0.0"
 pytest-mypy-plugins = "^3.2.0"
+python-dateutil = "^2.9.0.post0"
 
 [build-system]
 requires = ["poetry-core"]

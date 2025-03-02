@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+from dateutil import tz
 
 from asyncdb import LogicError, ResultRow, ObjectFetcher
 from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, MySQLConfig, \
@@ -249,6 +250,26 @@ async def test_aware_datetime(connection):
         assert dt.minute == 15
         assert dt.second == 16
         assert dt.tzinfo is timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_aware_datetime_different_tz(connection):
+    async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
+        dt = datetime(2021, 1, 3, 13, 15, 16, tzinfo=tz.gettz("US/Eastern"))  # UTC-5
+
+        # Ensure the timezone of connection is UTC.
+        assert transaction.connection.timezone == timezone.utc
+
+        await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME)")
+        await transaction.query("INSERT INTO `test` (`dt`) VALUES (%s)", dt)  # Insert date in different timezone
+
+        # Check whether the physically stored date is in UTC.
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == 'a2021-01-03 18:15:16'
+
+        # Try to fetch the date back.
+        fetched_dt = await transaction.get_scalar("SELECT `dt` FROM `test`")
+        assert fetched_dt == dt.astimezone(timezone.utc)
+        assert fetched_dt.tzinfo == timezone.utc
 
 
 @pytest.mark.asyncio

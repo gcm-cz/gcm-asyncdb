@@ -762,16 +762,23 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         self.transaction_class = transaction_class
         """Class used to create transaction instances."""
 
-    async def get_transaction(self, *args: Any, stacklevel: int = 1, **kwargs: Any) -> TransactionTypeT:
+    async def get_transaction(
+        self,
+        *args: Any,
+        stacklevel: int = 1,
+        timeout: Optional[float] = None,  # noqa: ASYNC109
+        **kwargs: Any,
+    ) -> TransactionTypeT:
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
         :param args: Optional args to the transaction class constructor.
         :param stacklevel: Stack level to skip when logging.
+        :param timeout: Optional timeout waiting for connection from the pool.
         :param kwargs: Optional kwargs to the transaction class constructor.
         :return: Instance of transaction class.
         """
-        conn = await self.get_conn(stacklevel + 1)
+        conn = await asyncio.wait_for(self.get_conn(stacklevel + 1), timeout=timeout)
         trans = PooledTransaction(self.transaction_class(conn, *args, **kwargs), pool=self)
         conn.current_transaction = trans
 
