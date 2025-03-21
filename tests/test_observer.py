@@ -2,8 +2,9 @@ from typing import Any
 
 import pytest
 
-from asyncdb.aiomysql import QueryObserver, TransactionObserver, AioMySQLConnection, Transaction, TransactionFactory
+from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, TransactionObserver
 from asyncdb.exceptions import ParseError
+
 from .test_connection import config
 
 
@@ -56,16 +57,16 @@ class TestTransactionObserver(TransactionObserver):
         self.after: bool = False
         self.error: bool = False
 
-    def observe_transaction_start(self, trx: Transaction, **kwargs: Any) -> Any:  # noqa: B027
+    def observe_transaction_start(self, trx: Transaction, **kwargs: Any) -> Any:
         self.start = True
 
-    def observe_transaction_end(self, trx: Transaction, context: Any, **kwargs: Any) -> None:  # noqa: B027
+    def observe_transaction_end(self, trx: Transaction, context: Any, **kwargs: Any) -> None:
         self.end = True
 
-    def observe_transaction_commit(self, trx: Transaction, context: Any, **kwargs: Any) -> None:  # noqa: B027
+    def observe_transaction_commit(self, trx: Transaction, context: Any, **kwargs: Any) -> None:
         self.commit = True
 
-    def observe_transaction_rollback(self, trx: Transaction, context: Any, **kwargs: Any) -> None:  # noqa: B027
+    def observe_transaction_rollback(self, trx: Transaction, context: Any, **kwargs: Any) -> None:
         self.rollback = True
 
     def observe_query_before(self, conn: AioMySQLConnection, query: str, trx_context: Any, **kwargs: Any) -> None:

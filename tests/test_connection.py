@@ -1,18 +1,24 @@
 import os
 import warnings
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 from dateutil import tz
 
-from asyncdb import LogicError, ResultRow, ObjectFetcher
-from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, MySQLConfig, \
-    TransactionIsolationLevel
+from asyncdb import LogicError, ObjectFetcher, ResultRow
+from asyncdb.aiomysql import (
+    AioMySQLConnection,
+    MySQLConfig,
+    QueryObserver,
+    Transaction,
+    TransactionFactory,
+    TransactionIsolationLevel,
+)
 from asyncdb.aiomysql.pool import transaction
 from asyncdb.aiomysql.result import BoolResult
-from asyncdb.exceptions import ImplicitRollback, ParseError, ScrollIndexError, Error, EntityNotFound, DuplicateEntry
+from asyncdb.exceptions import DuplicateEntry, EntityNotFound, Error, ImplicitRollback, ParseError, ScrollIndexError
 from asyncdb.pool import transaction as generic_transaction
 
 config = MySQLConfig(
@@ -201,6 +207,8 @@ async def test_bool_result_basic(connection, caplog):
             q = await transaction.query("COMMIT")
             assert isinstance(q, BoolResult)
             assert bool(q) is True
+            assert q == True
+            assert q == q
 
     for record in caplog.records:
         assert record.filename == "test_connection.py"
@@ -260,16 +268,29 @@ async def test_aware_datetime_different_tz(connection):
         # Ensure the timezone of connection is UTC.
         assert transaction.connection.timezone == timezone.utc
 
-        await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME)")
-        await transaction.query("INSERT INTO `test` (`dt`) VALUES (%s)", dt)  # Insert date in different timezone
+        await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `ts` TIMESTAMP, `d` DATE, `t` TIME)")
+        await transaction.query("INSERT INTO `test` (`dt`, `ts`, `d`, `t`) VALUES (%s, %s, %s, %s)", dt, dt, dt.date(), dt.timetz())  # Insert date in different timezone
 
         # Check whether the physically stored date is in UTC.
         assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == 'a2021-01-03 18:15:16'
+        assert await transaction.get_scalar("SELECT CONCAT('a', `ts`) FROM `test`") == "a2021-01-03 18:15:16"
+        assert await transaction.get_scalar("SELECT CONCAT('a', `d`) FROM `test`") == "a2021-01-03"
+        assert await transaction.get_scalar("SELECT CONCAT('a', `t`) FROM `test`") == "a13:15:16"
 
         # Try to fetch the date back.
-        fetched_dt = await transaction.get_scalar("SELECT `dt` FROM `test`")
+        fetched_dt: datetime = await transaction.get_scalar("SELECT `dt` FROM `test`")
         assert fetched_dt == dt.astimezone(timezone.utc)
         assert fetched_dt.tzinfo == timezone.utc
+
+        fetched_dt = await transaction.get_scalar("SELECT `ts` FROM `test`")
+        assert fetched_dt == dt.astimezone(timezone.utc)
+        assert fetched_dt.tzinfo == timezone.utc
+
+        fetched_d: date = await transaction.get_scalar("SELECT `d` FROM `test`")
+        assert fetched_d == dt.astimezone(timezone.utc).date()
+
+        fetched_t: timedelta = await transaction.get_scalar("SELECT `t` FROM `test`")
+        assert fetched_t.seconds == dt.hour * 3600 + dt.minute * 60 + dt.second
 
 
 @pytest.mark.asyncio

@@ -857,6 +857,20 @@ class BoolResult(Result, ABC):
         """
         return self._bool_result
 
+    def __eq__(self, other: Any) -> bool:
+        """
+        Compare the result with another object. If the other object is a bool, it will compare the bool result of the query
+        with the other object.
+        """
+
+        if isinstance(other, bool):
+            return bool(self) == other
+
+        if isinstance(other, BoolResult):
+            return bool(self) == bool(other)
+
+        return NotImplemented
+
 
 class Transaction(ABC, Generic[ConnectionTypeT]):
     """
