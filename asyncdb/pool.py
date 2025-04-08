@@ -95,11 +95,17 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         self.pool = pool
 
     async def __aenter__(self) -> Self:
-        if hasattr(self.__wrapped__, "__aenter__"):
-            with _SL():
-                await self.__wrapped__.__aenter__()
+        try:
+            if hasattr(self.__wrapped__, "__aenter__"):
+                with _SL():
+                    await self.__wrapped__.__aenter__()
 
-        return self
+            return self
+        except Exception:
+            # When initialization of transaction fails, the transaction is not performed, so we must return it to the pool
+            cast(CountedConnection[ConnectionTypeT], self.connection).current_transaction = None
+            await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection), discard=True)
+            raise
 
     async def __aexit__(
         self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
@@ -113,8 +119,15 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
                     await self.__wrapped__.__aexit__(exc_type, exc_val, exc_tb)
 
             cast(CountedConnection[ConnectionTypeT], self.connection).current_transaction = None
-        finally:
+
+            # Return the connection to the pool, as everything should be OK.
             await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection))
+        except Exception:
+            # When the transaction wrapper fails, do not return the connection, as we don't know the connection state.
+            cast(CountedConnection[ConnectionTypeT], self.connection).current_transaction = None
+            await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection), discard=True)
+            raise
+
 
     if TYPE_CHECKING:  # pragma: no cover
 
@@ -534,42 +547,49 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
         return conn
 
-    async def return_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:
+    async def return_conn(self, conn: CountedConnection[ConnectionTypeT], discard: bool = False) -> None:
         """
         Return connection to pool, or discard it if its lifetime is exceeded.
         :param conn: Connection to be returned.
+        :param discard: When the connection cannot be reused, set the argument to True and it will be discarded immediately
+          and eventually reused.
         """
-        should_return = True
+        should_return = not discard
 
         try:
-            if self._shutdown:
+            if not should_return:
+                self.log.debug("Discarding connection %r, as it has been marked dirty.", conn)
+
+            if self._shutdown and should_return:
                 self.log.debug("Discarding connection %r, because pool is shutting down.", conn)
                 should_return = False
 
-            if conn.current_transaction is not None:
+            if conn.current_transaction is not None and should_return:
                 self.log.error(
                     "Discarding connection %r, because it still contains active transaction %r.", conn, conn.current_transaction
                 )
                 should_return = False
 
-            if self._keeper_task_done is not None and self._keeper_task_done.done():
+            if self._keeper_task_done is not None and self._keeper_task_done.done() and should_return:
                 self.log.debug("Discarding connection %r, because keeper task has finished.")
                 should_return = False
 
             # Check whether the connection can be returned to queue.
             conn_is_over_usage = self.max_conn_usage and 0 < self.max_conn_usage <= conn.used
-            conn_is_too_old = self.max_conn_lifetime and 0 < self.max_conn_lifetime <= time() - conn.created
+            if conn_is_over_usage:
+                self.log.debug("Discarding connection %r because it's max usage count has been depleted.", conn)
+                should_return = False
 
-            if not conn_is_over_usage and not conn_is_too_old and should_return:
+            conn_is_too_old = self.max_conn_lifetime and 0 < self.max_conn_lifetime <= time() - conn.created
+            if conn_is_too_old:
+                self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
+                should_return = False
+
+            if should_return:
                 # Return connection to pool
                 await self.queue.put(conn)
                 self.log.debug("Returned connection %r to pool.", conn)
             else:
-                if conn_is_over_usage:
-                    self.log.debug("Discarding connection %r because it's max usage count has been depleted.", conn)
-                elif conn_is_too_old:
-                    self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
-
                 await self.close_conn(conn)
         finally:
             self._connections_in_use -= 1

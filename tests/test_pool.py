@@ -1,10 +1,11 @@
 import asyncio
+from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from asyncdb.aiomysql import MySQLConfig, MySQLConnectionPool
-from asyncdb.exceptions import QueryError
+from asyncdb.aiomysql import MySQLConfig, MySQLConnectionPool, Transaction
+from asyncdb.exceptions import QueryError, LostConnection
 
 
 @pytest_asyncio.fixture
@@ -205,3 +206,41 @@ async def test_pool_connect_error(caplog):
     assert "Connection failed with" in caplog.text
 
     await pool.close()
+
+
+class FailingTransaction(Transaction):
+    async def _start_transaction(self) -> None:
+        raise LostConnection("BEGIN", "Lost connection to MySQL server during query.", 0)
+
+
+class FailingMySQLConnectionPool(MySQLConnectionPool):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.transaction_class = FailingTransaction
+
+
+@pytest.mark.asyncio
+async def test_pool_transaction_error():
+    pool = FailingMySQLConnectionPool(MySQLConfig(max_pool_size=10), keeper_task=False)
+    assert pool.connections_in_use == 0
+    assert pool.current_pool_free == 0
+    assert pool.current_pool_size == 0
+    await pool._keeper_task_iteration()
+
+    assert pool.connections_in_use == 0
+    assert pool.current_pool_free == 5
+    assert pool.current_pool_size == 5
+
+    with pytest.raises(LostConnection):
+        async with await pool.get_transaction():
+            pass
+
+    assert pool.connections_in_use == 0
+    assert pool.current_pool_free == 4
+    assert pool.current_pool_size == 4
+
+    await pool._keeper_task_iteration()
+
+    assert pool.connections_in_use == 0
+    assert pool.current_pool_free == 5
+    assert pool.current_pool_size == 5
