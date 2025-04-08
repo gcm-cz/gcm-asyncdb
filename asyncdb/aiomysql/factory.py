@@ -1,8 +1,9 @@
 import asyncio
 from collections.abc import Collection
-from typing import AsyncGenerator, ClassVar, Optional, Type
+from typing import AsyncGenerator, ClassVar, Optional, Type, overload
 
 from ..context import TransactionContext
+from ..generics import TransactionWrapperT
 from .config import MySQLConfigProtocol
 from .connection import AioMySQLConnection
 from .observer import QueryObserver, TransactionObserver
@@ -174,9 +175,25 @@ class TransactionFactory:
         async with await asyncio.wait_for(self.pool.get_transaction(self.isolation_level), self.config.connect_timeout) as trx:
             yield trx
 
+    @overload
     def transaction(
-        self, isolation_level: Optional[TransactionIsolationLevel] = None, timeout: Optional[float] = None
-    ) -> TransactionContext[Transaction]:
+        self, isolation_level: Optional[TransactionIsolationLevel] = None, timeout: Optional[float] = None, wrapper: None = None
+    ) -> TransactionContext[Transaction]: ...
+
+    @overload
+    def transaction(
+        self,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        timeout: Optional[float] = None,
+        wrapper: Type[TransactionWrapperT] = ...,
+    ) -> TransactionContext[TransactionWrapperT]: ...
+
+    def transaction(
+        self,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        timeout: Optional[float] = None,
+        wrapper: Optional[Type[TransactionWrapperT]] = None,
+    ) -> TransactionContext[Transaction | TransactionWrapperProtocol]:
         """
         Returns transaction with optionally specifying isolation level and / or timeout for the connection.
 
@@ -201,9 +218,7 @@ class TransactionFactory:
         """
         return TransactionContext[Transaction](
             asyncio.wait_for(
-                self.pool.get_transaction(
-                    isolation_level or self.isolation_level,
-                ),
+                self.pool.get_transaction(isolation_level or self.isolation_level, wrapper=wrapper),
                 timeout or self.config.connect_timeout,
             )
         )

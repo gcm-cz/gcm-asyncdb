@@ -1,12 +1,13 @@
 import asyncio
 from collections.abc import Collection
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional, Type
+from typing import Any, AsyncGenerator, Optional, Type, overload
 
 import aiomysql
 
 from .. import logger
 from .._sl import _SL
+from ..generics import TransactionWrapperT
 from ..pool import CountedConnection, DatabaseConnectionPool
 from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
@@ -158,12 +159,31 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         self.log.debug("Closing connection %r.", conn)
         await conn.ensure_closed()
 
+    @overload
+    async def get_transaction(
+        self,
+        isolation_level: None = None,
+        *,
+        stacklevel: int = 1,
+        wrapper: None = None,
+    ) -> Transaction: ...
+
+    @overload
+    async def get_transaction(
+        self,
+        isolation_level: TransactionIsolationLevel,
+        *,
+        stacklevel: int = 1,
+        wrapper: Type[TransactionWrapperT] = ...,
+    ) -> TransactionWrapperT: ...
+
     async def get_transaction(  # type: ignore[override]
         self,
         isolation_level: Optional[TransactionIsolationLevel] = None,
         *,
         stacklevel: int = 1,
-    ) -> Transaction:
+        wrapper: Optional[Type[TransactionWrapperT]] = None,
+    ) -> Transaction | TransactionWrapperT:
         # pylint: disable=arguments-differ
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
@@ -173,7 +193,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :return: Instance of transaction class.
         """
         return await super().get_transaction(
-            isolation_level=isolation_level, stacklevel=stacklevel + 1, observers=self._transaction_observers
+            isolation_level=isolation_level, stacklevel=stacklevel + 1, observers=self._transaction_observers, wrapper=wrapper
         )
 
 

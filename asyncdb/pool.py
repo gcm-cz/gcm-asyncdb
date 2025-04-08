@@ -33,7 +33,7 @@ from . import logger
 from ._sl import _SL
 from .asyncdb import Result, Transaction
 from .exceptions import UnableToCreateConnection
-from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow
+from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow, TransactionWrapperT
 
 if TYPE_CHECKING:
     from prometheus_client import Gauge
@@ -95,11 +95,16 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         self.pool = pool
 
     async def __aenter__(self) -> Self:
-        if hasattr(self.__wrapped__, "__aenter__"):
-            with _SL():
-                await self.__wrapped__.__aenter__()
+        try:
+            if hasattr(self.__wrapped__, "__aenter__"):
+                with _SL():
+                    await self.__wrapped__.__aenter__()
 
-        return self
+            return self
+        except Exception:
+            # When initialization of transaction fails, the transaction is not performed, so we must return it to the pool
+            await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection))
+            raise
 
     async def __aexit__(
         self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
@@ -113,8 +118,14 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
                     await self.__wrapped__.__aexit__(exc_type, exc_val, exc_tb)
 
             cast(CountedConnection[ConnectionTypeT], self.connection).current_transaction = None
-        finally:
+
+            # Return the connection to the pool, as everything should be OK.
             await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection))
+        except Exception:
+            # When the transaction wrapper fails, do not return the connection, as we don't know the connection state.
+            await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection), discard=True)
+            raise
+
 
     if TYPE_CHECKING:  # pragma: no cover
 
@@ -534,42 +545,49 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
         return conn
 
-    async def return_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:
+    async def return_conn(self, conn: CountedConnection[ConnectionTypeT], discard: bool = False) -> None:
         """
         Return connection to pool, or discard it if its lifetime is exceeded.
         :param conn: Connection to be returned.
+        :param discard: When the connection cannot be reused, set the argument to True and it will be discarded immediately
+          and eventually reused.
         """
-        should_return = True
+        should_return = not discard
 
         try:
-            if self._shutdown:
+            if not should_return:
+                self.log.debug("Discarding connection %r, as it has been marked dirty.", conn)
+
+            if self._shutdown and should_return:
                 self.log.debug("Discarding connection %r, because pool is shutting down.", conn)
                 should_return = False
 
-            if conn.current_transaction is not None:
+            if conn.current_transaction is not None and should_return:
                 self.log.error(
                     "Discarding connection %r, because it still contains active transaction %r.", conn, conn.current_transaction
                 )
                 should_return = False
 
-            if self._keeper_task_done is not None and self._keeper_task_done.done():
+            if self._keeper_task_done is not None and self._keeper_task_done.done() and should_return:
                 self.log.debug("Discarding connection %r, because keeper task has finished.")
                 should_return = False
 
             # Check whether the connection can be returned to queue.
             conn_is_over_usage = self.max_conn_usage and 0 < self.max_conn_usage <= conn.used
+            if conn_is_over_usage:
+                self.log.debug("Discarding connection %r because it's max usage count has been depleted.", conn)
+                should_return = False
+
             conn_is_too_old = self.max_conn_lifetime and 0 < self.max_conn_lifetime <= time() - conn.created
+            if conn_is_too_old:
+                self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
+                should_return = False
 
             if not conn_is_over_usage and not conn_is_too_old and should_return:
                 # Return connection to pool
                 await self.queue.put(conn)
                 self.log.debug("Returned connection %r to pool.", conn)
             else:
-                if conn_is_over_usage:
-                    self.log.debug("Discarding connection %r because it's max usage count has been depleted.", conn)
-                elif conn_is_too_old:
-                    self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
-
                 await self.close_conn(conn)
         finally:
             self._connections_in_use -= 1
@@ -762,13 +780,33 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         self.transaction_class = transaction_class
         """Class used to create transaction instances."""
 
+    @overload
     async def get_transaction(
         self,
         *args: Any,
         stacklevel: int = 1,
         timeout: Optional[float] = None,  # noqa: ASYNC109
+        wrapper: None = None,
         **kwargs: Any,
-    ) -> TransactionTypeT:
+    ) -> TransactionTypeT: ...
+
+    @overload
+    async def get_transaction(
+        *args: Any,
+        stacklevel: int = 1,
+        timeout: Optional[float] = None,  # noqa: ASYNC109
+        wrapper: Type[TransactionWrapperT] = ...,
+        **kwargs: Any,
+    ) -> TransactionWrapperT: ...
+
+    async def get_transaction(
+        self,
+        *args: Any,
+        stacklevel: int = 1,
+        timeout: Optional[float] = None,  # noqa: ASYNC109
+        wrapper: Optional[TransactionWrapperT] = None,
+        **kwargs: Any,
+    ) -> TransactionTypeT | TransactionWrapperT:
         """
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
@@ -779,13 +817,18 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         :return: Instance of transaction class.
         """
         conn = await asyncio.wait_for(self.get_conn(stacklevel + 1), timeout=timeout)
-        trans = PooledTransaction(self.transaction_class(conn, *args, **kwargs), pool=self)
+        trx = self.transaction_class(conn, *args, **kwargs)
+
+        if wrapper:
+            trx = wrapper(trx)
+
+        trans = PooledTransaction(trx, pool=self)
         conn.current_transaction = trans
 
         # PooledTransaction is not really a TransactionTypeT, but it is object wrapper that acts like it is. For better
         # type hinting in IDE, we cast this to expected type. In runtime, it just works by proxying all calls to the
         # actual transaction object.
-        return cast(TransactionTypeT, trans)
+        return cast(TransactionTypeT | TransactionWrapperT, trans)
 
 
 T = TypeVar("T", bound=ConnectionPool[Any])

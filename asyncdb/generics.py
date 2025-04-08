@@ -1,6 +1,11 @@
-from typing import Any, Callable, MutableMapping, MutableSequence, MutableSet, Type
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Callable, MutableMapping, MutableSequence, MutableSet, Protocol, Type
 
 from typing_extensions import TypeVar
+
+if TYPE_CHECKING:
+    from asyncdb import Transaction
 
 T = TypeVar("T")
 
@@ -38,3 +43,14 @@ class ResultRow:
 
 ResObjT = TypeVar("ResObjT", default=ResultRow, bound=object)
 ConnectionTypeT = TypeVar("ConnectionTypeT")
+
+
+class TransactionWrapperProtocol(Protocol):
+    """
+    Protocol that describes class wrapping actual transaction.
+    """
+
+    def __init__(self, trx: Transaction[ConnectionTypeT]) -> None: ...
+
+
+TransactionWrapperT = TypeVar("TransactionWrapperT", bound=TransactionWrapperProtocol)

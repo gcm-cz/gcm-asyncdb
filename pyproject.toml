@@ -34,6 +34,7 @@ python = "^3.11"
 aiomysql = "^0"
 prometheus-client = "^0"
 wrapt = "^1"
+sqlfactory = "^1.13.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7"
@@ -45,6 +46,10 @@ pdoc = "^15.0.1"
 pytest-cov = "^6.0.0"
 pytest-mypy-plugins = "^3.2.0"
 python-dateutil = "^2.9.0.post0"
+sqlfactory = { version = "^1", optional = true }
+
+[tool.poetry.extras]
+sqlfactory = ["sqlfactory"]
 
 [build-system]
 requires = ["poetry-core"]
