@@ -128,7 +128,6 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             await self.pool.return_conn(cast(CountedConnection[ConnectionTypeT], self.connection), discard=True)
             raise
 
-
     if TYPE_CHECKING:  # pragma: no cover
 
         async def is_committed(self) -> bool:
