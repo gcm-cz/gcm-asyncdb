@@ -203,7 +203,7 @@ class AioMySQLConnection(aiomysql.Connection):
 
         # Encode timezone-aware datetime with correct timezone.
         if isinstance(obj, datetime.datetime) and self.timezone is not None and obj.tzinfo is not None:
-            obj = obj.astimezone(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
+            obj = obj.astimezone(self.timezone).strftime("%Y-%m-%d %H:%M:%S.%f")
 
         return super().escape(obj)
 

@@ -294,6 +294,31 @@ async def test_aware_datetime_different_tz(connection):
 
 
 @pytest.mark.asyncio
+async def test_datetime_ms(connection):
+    async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
+        dt = datetime(2021, 1, 3, 13, 15, 16, 123456, tzinfo=timezone.utc)
+        await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `dt_ms` DATETIME(6), `ts` TIMESTAMP, `ts_ms` TIMESTAMP(6))")
+        await transaction.query("INSERT INTO `test` (`dt`, `dt_ms`, `ts`, `ts_ms`) VALUES (%s, %s, %s, %s)", dt, dt, dt, dt)
+
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == 'a2021-01-03 13:15:16'
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt_ms`) FROM `test`") == 'a2021-01-03 13:15:16.123456'
+        assert await transaction.get_scalar("SELECT CONCAT('a', `ts`) FROM `test`") == 'a2021-01-03 13:15:16'
+        assert await transaction.get_scalar("SELECT CONCAT('a', `ts_ms`) FROM `test`") == 'a2021-01-03 13:15:16.123456'
+
+        fetched_dt: datetime = await transaction.get_scalar("SELECT `dt` FROM `test`")
+        assert fetched_dt == dt.replace(microsecond=0)
+
+        fetched_dt = await transaction.get_scalar("SELECT `dt_ms` FROM `test`")
+        assert fetched_dt == dt
+
+        fetched_dt: datetime = await transaction.get_scalar("SELECT `ts` FROM `test`")
+        assert fetched_dt == dt.replace(microsecond=0)
+
+        fetched_dt = await transaction.get_scalar("SELECT `ts_ms` FROM `test`")
+        assert fetched_dt == dt
+
+
+@pytest.mark.asyncio
 async def test_logging_correct(connection, caplog):
     async with Transaction(connection) as transaction:
         caplog.clear()
