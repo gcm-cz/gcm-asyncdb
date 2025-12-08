@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Any
 
 import pytest
@@ -10,7 +11,18 @@ from asyncdb.exceptions import QueryError, LostConnection
 
 @pytest_asyncio.fixture
 async def pool():
-    pool = MySQLConnectionPool(MySQLConfig(max_spare_conns=5, min_spare_conns=3), keeper_task=False)
+    pool = MySQLConnectionPool(
+        MySQLConfig(
+            host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+            port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+            user=os.getenv("TEST_MYSQL_USER", "root"),
+            password=os.getenv("TEST_MYSQL_PASSWORD", ""),
+            database=os.getenv("TEST_MYSQL_DATABASE", "test"),
+            max_spare_conns=5,
+            min_spare_conns=3,
+        ),
+        keeper_task=False,
+    )
     yield pool
     await pool.close()
 
@@ -77,7 +89,17 @@ async def test_pool_dynamically_creates_connections(pool):
 
 @pytest.mark.asyncio
 async def test_pool_depletion():
-    pool = MySQLConnectionPool(MySQLConfig(max_pool_size=1), keeper_task=False)
+    pool = MySQLConnectionPool(
+        MySQLConfig(
+            host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+            port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+            user=os.getenv("TEST_MYSQL_USER", "root"),
+            password=os.getenv("TEST_MYSQL_PASSWORD", ""),
+            database=os.getenv("TEST_MYSQL_DATABASE", "test"),
+            max_pool_size=1,
+        ),
+        keeper_task=False,
+    )
     assert pool.current_pool_size == 0
     assert pool.current_pool_free == 0
 
@@ -127,7 +149,18 @@ async def test_pool_depletion():
 
 @pytest.mark.asyncio
 async def test_pool_discard_conns():
-    pool = MySQLConnectionPool(MySQLConfig(max_pool_size=1, max_conn_usage=2), keeper_task=False)
+    pool = MySQLConnectionPool(
+        MySQLConfig(
+            max_pool_size=1,
+            max_conn_usage=2,
+            host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+            port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+            user=os.getenv("TEST_MYSQL_USER", "root"),
+            password=os.getenv("TEST_MYSQL_PASSWORD", ""),
+            database=os.getenv("TEST_MYSQL_DATABASE", "test"),
+        ),
+        keeper_task=False,
+    )
     await pool._keeper_task_iteration()
 
     assert pool.current_pool_size == 1
@@ -176,7 +209,18 @@ async def test_pool_discard_conns():
 
 @pytest.mark.asyncio
 async def test_remote_app():
-    pool = MySQLConnectionPool(MySQLConfig(max_pool_size=1, remote_app="test-remote-app"), keeper_task=False)
+    pool = MySQLConnectionPool(
+        MySQLConfig(
+            host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+            port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+            user=os.getenv("TEST_MYSQL_USER", "root"),
+            password=os.getenv("TEST_MYSQL_PASSWORD", ""),
+            database=os.getenv("TEST_MYSQL_DATABASE", "test"),
+            max_pool_size=1,
+            remote_app="test-remote-app",
+        ),
+        keeper_task=False,
+    )
     await pool._keeper_task_iteration()
 
     # Pool has remote app
@@ -221,7 +265,17 @@ class FailingMySQLConnectionPool(MySQLConnectionPool):
 
 @pytest.mark.asyncio
 async def test_pool_transaction_error():
-    pool = FailingMySQLConnectionPool(MySQLConfig(max_pool_size=10), keeper_task=False)
+    pool = FailingMySQLConnectionPool(
+        MySQLConfig(
+            host=os.getenv("TEST_MYSQL_HOST", "localhost"),
+            port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
+            user=os.getenv("TEST_MYSQL_USER", "root"),
+            password=os.getenv("TEST_MYSQL_PASSWORD", ""),
+            database=os.getenv("TEST_MYSQL_DATABASE", "test"),
+            max_pool_size=10,
+        ),
+        keeper_task=False,
+    )
     assert pool.connections_in_use == 0
     assert pool.current_pool_free == 0
     assert pool.current_pool_size == 0

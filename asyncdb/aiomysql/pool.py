@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional, Type
 
 import aiomysql
+from tenacity.stop import StopBaseT
+from tenacity.wait import WaitBaseT
 
 from .. import logger
 from .._sl import _SL
@@ -162,6 +164,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         self,
         isolation_level: Optional[TransactionIsolationLevel] = None,
         *,
+        retry_stop: Optional[StopBaseT] = None,
+        retry_wait: Optional[WaitBaseT] = None,
         stacklevel: int = 1,
     ) -> Transaction:
         # pylint: disable=arguments-differ
@@ -169,11 +173,17 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         Get transaction from the connection. Use this primarily instead of get_conn(), as transaction is the
         access class that you should work with.
         :param isolation_level: Transaction isolation level.
+        :param retry_stop: Tenacity stop strategy for deadlock retries. If None, default from pool configuration will be used.
+        :param retry_wait: Tenacity wait strategy for deadlock retries. If None, default from pool configuration will be used.
         :param stacklevel: Stack level to skip when logging.
         :return: Instance of transaction class.
         """
         return await super().get_transaction(
-            isolation_level=isolation_level, stacklevel=stacklevel + 1, observers=self._transaction_observers
+            isolation_level=isolation_level,
+            stacklevel=stacklevel + 1,
+            observers=self._transaction_observers,
+            retry_stop=retry_stop,
+            retry_wait=retry_wait,
         )
 
 
@@ -182,11 +192,19 @@ async def transaction(
     pool: MySQLConnectionPool,
     isolation_level: Optional[TransactionIsolationLevel] = None,
     timeout: Optional[float] = None,  # noqa: ASYNC109
+    *,
+    retry_stop: Optional[StopBaseT] = None,
+    retry_wait: Optional[WaitBaseT] = None,
 ) -> AsyncGenerator[Transaction, None]:
     """
     Return database transaction from the pool as async context.
     """
     async with await asyncio.wait_for(
-        pool.get_transaction(isolation_level=isolation_level), timeout or pool.config.connect_timeout
+        pool.get_transaction(
+            isolation_level=isolation_level,
+            retry_stop=retry_stop,
+            retry_wait=retry_wait,
+        ),
+        timeout or pool.config.connect_timeout,
     ) as trans:
         yield trans

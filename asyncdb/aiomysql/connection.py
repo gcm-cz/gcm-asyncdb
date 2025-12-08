@@ -12,7 +12,8 @@ from pymysql.converters import convert_datetime, decoders
 from .. import logger
 from .._sl import _SL
 from .cursor import Cursor
-from .observer import LoggingObserver, ObserverContext, QueryObserver, _QueryObserverContext
+from .observer import ObserverContext, QueryObserver, _QueryObserverContext
+from .observers.logging_observer import LoggingObserver
 
 
 class AioMySQLConnection(aiomysql.Connection):

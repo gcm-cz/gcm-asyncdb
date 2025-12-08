@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 from abc import ABC
 from contextvars import ContextVar, Token
-from time import time
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self, Type
+
+from tenacity import RetryCallState
 
 from .._sl import _SL
 
@@ -111,6 +111,9 @@ class TransactionObserver(ABC):  # noqa: B024
     >>>     def observe_query_after(self, transaction: Transaction, result: Result, **kwargs):
     >>>         print(f"Query executed with result {result}")
     >>>
+    >>>     def observe_transaction_retry(self, transaction: Transaction, context: Any, retry_state: RetryCallState):
+    >>>         print("Transaction is going to be retried.")
+    >>>
     >>>
     >>> connection: AioMySQLConnection = ...
     >>> trx = Transaction(connection)
@@ -199,51 +202,13 @@ class TransactionObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the transaction rollback method.
         """
 
-
-class LoggingObserver(QueryObserver):
-    """
-    Observer that logs all queries to the logger.
-    """
-
-    def __init__(self, logger: logging.Logger) -> None:
+    def observe_transaction_retry(self, trx: Transaction, context: Any, retry_state: RetryCallState) -> None:  # noqa: B027
         """
-        :param logger: Logger to log queries to.
+        Called when the transaction is to be retried.
+        :param trx: Transaction object that is being retried.
+        :param context: Context object returned by observe_transaction_start method.
+        :param retry_state: Additional kwargs passed to the transaction retry method.
         """
-        self.logger = logger
-
-    def observe_query_before(
-        self, conn: AioMySQLConnection, query: str, *, logger: Optional[logging.Logger] = None, stacklevel: int = 0, **kwargs: Any
-    ) -> float:
-        """Log start of query execution."""
-        (logger or self.logger).debug("Executing %s", query, stacklevel=_SL.get() + stacklevel)
-        return time()
-
-    def observe_query_after(
-        self,
-        conn: AioMySQLConnection,
-        query: str,
-        context: float,
-        *,
-        logger: Optional[logging.Logger] = None,
-        stacklevel: int = 0,
-        **kwargs: Any,
-    ) -> None:
-        """Log end of query execution."""
-        (logger or self.logger).debug("Took %1.4fs", time() - context, stacklevel=_SL.get() + stacklevel)
-
-    def observe_query_error(
-        self,
-        conn: AioMySQLConnection,
-        query: str,
-        error: BaseException,
-        context: float,
-        *,
-        logger: Optional[logging.Logger] = None,
-        stacklevel: int = 0,
-        **kwargs: Any,
-    ) -> None:
-        """Log query error."""
-        (logger or self.logger).debug("Took %1.4fs: %s", time() - context, str(error), stacklevel=_SL.get() + stacklevel)
 
 
 class ObserverContext:

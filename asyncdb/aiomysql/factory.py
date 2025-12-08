@@ -2,6 +2,9 @@ import asyncio
 from collections.abc import Collection
 from typing import AsyncGenerator, ClassVar, Optional, Type
 
+from tenacity.stop import StopBaseT
+from tenacity.wait import WaitBaseT
+
 from ..context import TransactionContext
 from .config import MySQLConfigProtocol
 from .connection import AioMySQLConnection
@@ -11,6 +14,7 @@ from .transaction import Transaction, TransactionIsolationLevel
 
 
 class TransactionFactory:
+    # pylint: disable=too-many-instance-attributes
     """
     Transaction factory from given MySQL connection pool. Can be used as FastAPI dependency, or directly by invoking
     `TransactionFactory.transaction()`.
@@ -104,12 +108,21 @@ class TransactionFactory:
         connection_class: Type[AioMySQLConnection] = AioMySQLConnection,
         connection_observers: Optional[Collection[QueryObserver]] = None,
         transaction_observers: Optional[Collection[TransactionObserver]] = None,
+        retry_stop: Optional[StopBaseT] = None,
+        retry_wait: Optional[WaitBaseT] = None,
     ) -> None:
         """
         :param config: Configuration of the MySQL pool.
         :param isolation_level: Default transaction isolation level for transactions created using this factory. If None,
             server's default isolation level is used.
         :param connection_class: Connection class to use for the pool. Defaults to `AioMySQLConnection`.
+        :param connection_observers: Optional collection of connection observers to attach to each connection in the pool.
+        :param transaction_observers: Optional collection of transaction observers to attach to each transaction created
+            from the pool.
+        :param retry_stop: Default tenacity stop strategy for deadlock retries.
+            If None, default from `config.DEFAULT_RETRY_STOP` will be used.
+        :param retry_wait: Default tenacity wait strategy for deadlock retries.
+            If None, default from `config.DEFAULT_RETRY_WAIT` will be used.
         """
         self._cache_key = (config.host, config.port, config.user, config.database)
 
@@ -123,6 +136,9 @@ class TransactionFactory:
         self._connection_class = connection_class
         self._connection_observers = connection_observers or []
         self._transaction_observers = transaction_observers or []
+
+        self._retry_stop = retry_stop
+        self._retry_wait = retry_wait
 
     def ensure_pool(self) -> None:
         # pylint: disable=protected-access
@@ -171,11 +187,23 @@ class TransactionFactory:
         >>>     await trx.commit()
         >>>     return out
         """
-        async with await asyncio.wait_for(self.pool.get_transaction(self.isolation_level), self.config.connect_timeout) as trx:
+        async with await asyncio.wait_for(
+            self.pool.get_transaction(
+                self.isolation_level,
+                retry_stop=self._retry_stop,
+                retry_wait=self._retry_wait,
+            ),
+            self.config.connect_timeout,
+        ) as trx:
             yield trx
 
     def transaction(
-        self, isolation_level: Optional[TransactionIsolationLevel] = None, timeout: Optional[float] = None
+        self,
+        isolation_level: Optional[TransactionIsolationLevel] = None,
+        timeout: Optional[float] = None,
+        *,
+        retry_stop: Optional[StopBaseT] = None,
+        retry_wait: Optional[WaitBaseT] = None,
     ) -> TransactionContext[Transaction]:
         """
         Returns transaction with optionally specifying isolation level and / or timeout for the connection.
@@ -203,6 +231,8 @@ class TransactionFactory:
             asyncio.wait_for(
                 self.pool.get_transaction(
                     isolation_level or self.isolation_level,
+                    retry_stop=retry_stop or self._retry_stop,
+                    retry_wait=retry_wait or self._retry_wait,
                 ),
                 timeout or self.config.connect_timeout,
             )

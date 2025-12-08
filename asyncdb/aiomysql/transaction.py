@@ -2,18 +2,24 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from enum import Enum
+from functools import wraps
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, Optional, Self, Type, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, Self, Type, cast, overload
 
+from tenacity import RetryCallState, retry, retry_if_exception_type
+from tenacity.stop import StopBaseT
+from tenacity.wait import WaitBaseT
 from typing_extensions import deprecated
 
 from .._sl import _SL
 from ..asyncdb import Transaction as AsyncTransactionBase
-from ..exceptions import LogicError
+from ..exceptions import Deadlock, LogicError
 from ..generics import ArgsT
+from .config import DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
 from .cursor import Cursor
 from .error import _query_error_factory
 from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
+from .observers.logging_observer import TransactionLoggingObserver
 from .result import BoolResult, Result
 
 if TYPE_CHECKING:
@@ -66,6 +72,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         connection: AioMySQLConnection,
         isolation_level: Optional[TransactionIsolationLevel] = None,
         observers: Optional[Collection[TransactionObserver]] = None,
+        retry_stop: Optional[StopBaseT] = None,
+        retry_wait: Optional[WaitBaseT] = None,
     ):
         """
         Create new transaction on top of existing AioMySQLConnection.
@@ -90,6 +98,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
           connection at the time.
         :param isolation_level: Transaction isolation level to use. If None, default isolation level of the database is used.
         :param observers: Collection of observers to attach to the transaction.
+        :param retry_stop: Optional tenacity stop condition for deadlock retries.
+        :param retry_wait: Optional tenacity wait condition for deadlock retries.
         """
         super().__init__(connection)
 
@@ -99,6 +109,9 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self._transaction_open = True
         self._transaction_initiated = False
         self._last_result: Optional[Result] = None
+
+        self._retry_stop = retry_stop
+        self._retry_wait = retry_wait
 
         self._cursor_clean = True
 
@@ -111,7 +124,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self.connection_observer = _TransactionQueryObserver(self)
         """Observer bound to connection, to pass callbacks to transaction observers."""
 
-        self.connection.attach(self.connection_observer)
+        self.attach(TransactionLoggingObserver(logger=self.connection.logger))
 
         if observers:
             for observer in observers:
@@ -230,9 +243,24 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         """
         return self._isolation_level
 
+    async def reset(self) -> None:
+        """
+        Reset the transaction object to be used again.
+        """
+        with _SL():
+            await self.cleanup()
+
+            if not self.is_committed():
+                await self.rollback()
+
+            self._transaction_initiated = False
+            await self._start_transaction()
+
     async def _start_transaction(self) -> None:
         if self._transaction_initiated:
             raise LogicError("", "Transaction has already been started.", remote_app=self.remote_app)
+
+        self.connection.attach(self.connection_observer)
 
         with _SL():
             with _SL():
@@ -255,6 +283,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
                     # pylint: disable=broad-exception-caught
                     except Exception as exc:
                         _query_error_factory("BEGIN", exc, self._connection)
+
+        self._transaction_open = True
 
     async def is_committed(self) -> bool:
         """
@@ -677,3 +707,110 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             raise LogicError("", "Last query did not produce result. Unable to scroll.", remote_app=self.remote_app)
 
         await self._last_result.scroll(value, mode)
+
+    async def _observe_retry(self, retry_state: RetryCallState) -> None:
+        """
+        Observe the retry state and log it. This is called before each retry.
+
+        :param retry_state: Retry state.
+        """
+        with _SL(4):
+            if not await self.is_committed():
+                await self.rollback()
+
+            with _SL(2):
+                for observer in self.observers:
+                    if isinstance(observer, TransactionObserver):
+                        observer.observe_transaction_retry(self, self.observer_context.get(id(observer)), retry_state=retry_state)
+
+    async def _retry_reset_transaction(self, retry_state: RetryCallState) -> None:
+        """
+        Resets the transaction before retrying. This is called before each retry.
+
+        :param retry_state: Retry state.
+        """
+        # Don't reset anything on first attempt, the transaction shuld be clean.
+        if retry_state.attempt_number == 1:
+            return
+
+        with _SL(5):
+            await self.reset()
+
+    @overload
+    def deadlock_retry(
+        self,
+        /,
+        func: Optional[Callable[..., Awaitable[Any]]] = None,
+    ) -> Callable[..., Awaitable[Any]]: ...
+
+    @overload
+    def deadlock_retry(
+        self,
+        /,
+        *,
+        retry_wait: Optional[WaitBaseT] = None,
+        retry_stop: Optional[StopBaseT] = None,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]: ...
+
+    def deadlock_retry(
+        self,
+        /,
+        func: Optional[Callable[..., Awaitable[Any]]] = None,
+        *,
+        retry_wait: Optional[WaitBaseT] = None,
+        retry_stop: Optional[StopBaseT] = None,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]] | Callable[..., Awaitable[Any]]:
+        """
+        Constructs decorator to decorate methods that should be retried in case of deadlock. Note that you must retry the whole
+        transaction, not just the query that caused the deadlock.
+
+        Usage:
+
+        >>> # Initialize transaction as usual
+        >>> async with Transaction() as trx:
+        >>>     @trx.deadlock_retry
+        >>>     async def retry_block():
+        >>>         # Transaction logic goes here.
+        >>>         await trx.query("SELECT 1")
+        >>>
+        >>>     await retry_block()
+
+        Optionally, you can pass retry strategies to customize the retry behavior:
+
+        >>> from tenacity import wait_fixed, stop_after_attempt
+        >>>
+        >>> async with Transaction() as trx:
+        >>>     @trx.deadlock_retry(
+        >>>         retry_wait=wait_fixed(2),  # Wait 2 seconds between retries
+        >>>         retry_stop=stop_after_attempt(5)  # Stop after 5 attempts
+        >>>     )
+        >>>     async def retry_block():
+        >>>         # Transaction logic goes here.
+        >>>         await trx.query("SELECT 1")
+        >>>
+        >>>     await retry_block()
+
+        :param retry_wait: Wait strategy for retries. If None, uses factory's default.
+        :param retry_stop: Stop strategy for retries. If None, uses factory's default.
+        :return: Function decorator to wrap the function to be retried.
+        """
+
+        def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+            @retry(
+                retry=retry_if_exception_type(Deadlock),
+                wait=retry_wait or self._retry_wait or DEFAULT_RETRY_WAIT,
+                stop=retry_stop or self._retry_stop or DEFAULT_RETRY_STOP,
+                reraise=True,
+                before=self._retry_reset_transaction,
+                before_sleep=self._observe_retry,
+            )
+            @wraps(func)
+            async def decorated(*args: Any, **kwargs: Any) -> Any:
+                return await func(*args, **kwargs)
+
+            return decorated
+
+        if func:
+            return decorator(func)
+
+        return decorator

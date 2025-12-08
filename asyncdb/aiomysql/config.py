@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from datetime import timezone, tzinfo
 from typing import Optional, Protocol
 
+from tenacity import stop_after_delay, wait_exponential
+from tenacity.stop import StopBaseT
+from tenacity.wait import WaitBaseT
+
 
 class MySQLConfigProtocol(Protocol):
     """
@@ -121,3 +125,10 @@ class MySQLConfig(MySQLConfigProtocol):  # pylint: disable=too-many-instance-att
     wait_timeout: Optional[int] = None
     remote_app: Optional[str] = None
     timezone: Optional[tzinfo] = timezone.utc
+
+
+DEFAULT_RETRY_STOP: StopBaseT = stop_after_delay(10)
+""" Default retry stop strategy for retrying transactions. """
+
+DEFAULT_RETRY_WAIT: WaitBaseT = wait_exponential(multiplier=0.01, min=0.05, max=0.5)
+""" Default retry wait strategy for retrying transactions. """

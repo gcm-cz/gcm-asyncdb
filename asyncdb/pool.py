@@ -489,7 +489,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
                 )
                 conn = await self.queue.get()
             else:
-                # Try to create connectiom immediately. If it fails, wait for queue to get anything from keeper.
+                # Try to create connection immediately. If it fails, wait for queue to get anything from keeper.
                 try:
                     conn = await self.make_conn()
 
