@@ -12,6 +12,7 @@ from tenacity.wait import WaitBaseT
 from typing_extensions import deprecated
 
 from .._sl import _SL
+from .._sqlfactory_compat import ExecutableStatement
 from ..asyncdb import Transaction as AsyncTransactionBase
 from ..exceptions import Deadlock, LogicError
 from ..generics import ArgsT
@@ -436,13 +437,13 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
                     self._transaction_open = False
 
-    async def _check_transaction_open(self, query: str) -> None:
+    async def _check_transaction_open(self, query: str | ExecutableStatement) -> None:
         """Raise an error when transaction has already been commited."""
         if not self._transaction_initiated:
             await self._start_transaction()
 
         if await self.is_committed():
-            raise LogicError(query, "Cannot perform operation on committed transaction.", remote_app=self.remote_app)
+            raise LogicError(str(query), "Cannot perform operation on committed transaction.", remote_app=self.remote_app)
 
     async def _clean_cursor(self, result: Result) -> None:
         if self._last_result != result:
@@ -497,7 +498,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             await self._cursor.close()
             self._cursor = None
 
-    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
+    async def query(self, query: str | ExecutableStatement, *args: Any, **kwargs: Any) -> Result:
         """
         Execute single query inside the transaction scope, substituting all %s placeholders in the query string with
         provided arguments in the variadic arguments.
@@ -531,31 +532,34 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
             if not self._cursor_clean:
                 raise LogicError(
-                    query,
+                    str(query),
                     f"Commands out of sync: You must first process all rows from previous "
                     f"result {self._cursor_clean} {id(self)}.",
                     remote_app=self.remote_app,
                 )
 
             if kwargs:
-                raise LogicError(query, "aiomysql does not support kwargs in query.", remote_app=self.remote_app)
+                raise LogicError(str(query), "aiomysql does not support kwargs in query.", remote_app=self.remote_app)
 
             cursor = await self._get_cursor()
 
             try:
-                await cursor.execute(query, args)
+                if isinstance(query, ExecutableStatement):
+                    await cursor.execute(str(query), query.args)
+                else:
+                    await cursor.execute(query, args)
 
             # pylint: disable=broad-exception-caught
             except Exception as exc:
-                _query_error_factory(query, exc, self.connection)
+                _query_error_factory(str(query), exc, self.connection)
 
             if cursor.description:
                 self._cursor_clean = False
-                self._last_result = Result(self, cursor, f"{query} with args {args}" if args else query)
+                self._last_result = Result(self, cursor, f"{query!s} with args {args}" if args else repr(query))
                 return self._last_result
 
             self._last_result = None
-            return BoolResult(self, True, f"{query} with args {args}" if args else query)
+            return BoolResult(self, True, f"{query!s} with args {args}" if args else repr(query))
 
     @property
     def remote_app(self) -> str:

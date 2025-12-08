@@ -28,6 +28,7 @@ from warnings import warn
 from typing_extensions import deprecated
 
 from ._sl import _SL
+from ._sqlfactory_compat import ExecutableStatement
 from .exceptions import EntityNotFound, Error, ImplicitRollback, LogicError, TooManyRowsError
 from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResObjT, ResultRow, SetT, T
 
@@ -1001,8 +1002,14 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>> asyncio.run(main())
         """
 
+    @overload
+    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result: ...
+
+    @overload
+    async def query(self, query: ExecutableStatement) -> Result: ...
+
     @abstractmethod
-    async def query(self, query: str, *args: Any, **kwargs: Any) -> Result:
+    async def query(self, query: str | ExecutableStatement, *args: Any, **kwargs: Any) -> Result:
         """
         Execute single query inside the transaction scope, substituting all %s placeholders in the query string with
         provided arguments in the variadic arguments.
@@ -1096,24 +1103,28 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def _get(
         self,
         result_fetcher: Callable[..., Callable[..., Awaitable[Any]]],
-        query: str,
-        args: Optional[Iterable[Any]],
+        query: str | ExecutableStatement,
+        args: Optional[Iterable[Any]] | Type[T] | Callable[..., T],
         cls: Type[T] | Callable[..., T],
         *cls_args: Any,
         **cls_kwargs: Any,
     ) -> T:
         with _SL():
-            res = await self.query(query, *(args or []))
+            if isinstance(query, ExecutableStatement):
+                res = await self.query(query)
+            else:
+                res = await self.query(query, *(args or []))
+
             if not isinstance(res, Result) or isinstance(res, BoolResult):
-                raise LogicError(query, "Query did not return result.")
+                raise LogicError(str(query), "Query did not return result.")
 
             row = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
             if row is None:
-                raise EntityNotFound(query, "Requested entity was not found.")
+                raise EntityNotFound(str(query), "Requested entity was not found.")
 
             another = await result_fetcher(res)(cls, *cls_args, **cls_kwargs)
             if another is not None:
-                raise TooManyRowsError(query, "Query returned more than one row.")
+                raise TooManyRowsError(str(query), "Query returned more than one row.")
 
             return row
 
@@ -1143,6 +1154,31 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
 
     @overload
+    async def get_object(self, query: ExecutableStatement, /) -> ResultRow:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard `Result.fetch_object()`.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>> from sqlfactory import Select, Eq
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object(Select("id", "name", table="products", where=Eq("id", 1)))
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
+        :param query: Query to be executed
+        :return: Object retrieved by the query.
+        :raise: `asyncdb.exceptions.LogicError` when query returns more than one row.
+        """
+
+    @overload
     async def get_object(
         self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> OBJ:
@@ -1166,6 +1202,49 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>         row = await trx.get_object(
         >>>             "SELECT `id`, `name` FROM `products` WHERE `id` = %s",  # Query to be executed
         >>>             [1],            # Query arguments as collection
+        >>>             Product,        # Type that will be fetched
+        >>>             as_kwargs=True  # Pass columns from query as kwargs to Product constructor.
+        >>>         )
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
+        :param query: Query to be executed
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :param cls: Class representing the object that should be returned.
+        :param cls_args: Optional arguments to the `cls` constructor.
+        :param cls_kwargs: Optional keyword arguments to the `cls` constructor.
+        :return: Object of type `cls` retrieved by the query.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
+        """
+
+    @overload
+    async def get_object(
+        self, query: ExecutableStatement, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
+    ) -> OBJ:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard `Result.fetch_object()` of specified type.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>> from dataclasses import dataclass
+        >>> from sqlfactory import Select, Eq
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object(
+        >>>             Select("id", "name", table="products", where=Eq("id", 1)),  # Query to be executed
         >>>             Product,        # Type that will be fetched
         >>>             as_kwargs=True  # Pass columns from query as kwargs to Product constructor.
         >>>         )
@@ -1237,10 +1316,61 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         :raises: `TooManyRowsError` if query returned more than single row.
         """
 
+    @overload
     async def get_object(
         self,
-        query: str,
-        args: Optional[Iterable[Any]] = None,
+        query: ExecutableStatement,
+        cls: Callable[..., OBJ] = ...,
+        /,
+        *cls_args: Any,
+        as_kwargs: bool = False,
+        **cls_kwargs: Any,
+    ) -> OBJ:
+        """
+        Retrieve single object from the database. The query must return exactly one row, which will be
+        converted to object using standard `Result.fetch_object()` of specified type.
+
+        Example:
+
+        >>> import asyncio
+        >>> from asyncdb import Transaction
+        >>> from dataclasses import dataclass
+        >>> from sqlfactory import Select, Eq
+        >>>
+        >>> @dataclass
+        >>> class Product:
+        >>>     id: int
+        >>>     name: str
+        >>>
+        >>> async def main():
+        >>>     async with Transaction(...) as trx:
+        >>>         row = await trx.get_object(
+        >>>             Select("id", "name", table="products", where=Eq("id", 1)),  # Query to be executed
+        >>>             Product,            # Type that will be fetched
+        >>>             as_kwargs=True,     # Pass columns from query as kwargs to Product constructor.
+        >>>         )
+        >>>         print(row)
+        >>>         # ResultRow(id=1, name="Product 1")
+        >>>
+        >>> asyncio.run(main())
+
+        :param query: Query to be executed
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :param cls: Factory creating the object that should be returned.
+        :param cls_args: Optional arguments to the `cls` constructor.
+        :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
+          will be set directly using setattr().
+        :param cls_kwargs: Optional keyword arguments to the `cls` constructor.
+        :return: Object of type `cls` retrieved by the query.
+        :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
+        :raises: `EntityNotFound` if query returned a result set, but it was empty.
+        :raises: `TooManyRowsError` if query returned more than single row.
+        """
+
+    async def get_object(
+        self,
+        query: str | ExecutableStatement,
+        args: Optional[Iterable[Any]] | OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = None,
         cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow,
         /,
         *cls_args: Any,
@@ -1264,8 +1394,9 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>
         >>> asyncio.run(main())
 
-        :param query: Query to execute
-        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call).
+        :param query: Query to execute (or sqlfactory statement)
+        :param args: Arguments to the query (as collection, not as variadic arguments - this differs from `query()` call). Only
+          if query is str. If query is sqlfactory statement, this argument is used as `cls`.
         :param cls: See `Result.fetch_object()` for details
         :param cls_args: See `Result.fetch_object()` for details
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
@@ -1291,14 +1422,22 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_dict(self, query: str, args: Optional[Iterable[Any]] = None, /) -> dict[str, Any]: ...
 
     @overload
+    async def get_dict(self, query: ExecutableStatement, /) -> dict[str, Any]: ...
+
+    @overload
     async def get_dict(
         self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> DictT: ...
 
+    @overload
+    async def get_dict(
+        self, query: ExecutableStatement, cls: Type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+    ) -> DictT: ...
+
     async def get_dict(
         self,
-        query: str,
-        args: Optional[Iterable[Any]] = None,
+        query: str | ExecutableStatement,
+        args: Optional[Iterable[Any]] | Type[DictT | dict[str, Any]] = None,
         cls: Type[DictT | dict[str, Any]] = dict,
         /,
         *cls_args: Any,
@@ -1321,8 +1460,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>
         >>> asyncio.run(main())
 
-        :param query: Query to execute
-        :param args: Arguments to the query
+        :param query: Query to execute (or sqlfactory statement)
+        :param args: Arguments to the query. If query is sqlfactory statement, this argument is used as `cls`.
         :param cls: See Result.fetch_dict for details
         :param cls_args: See Result.fetch_dict for details
         :param cls_kwargs: See Result.fetch_dict for details
@@ -1338,14 +1477,22 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_list(self, query: str, args: Optional[Iterable[Any]] = None, /) -> list[Any]: ...
 
     @overload
+    async def get_list(self, query: ExecutableStatement, /) -> list[Any]: ...
+
+    @overload
     async def get_list(
         self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> ListT: ...
 
+    @overload
+    async def get_list(
+        self, query: ExecutableStatement, cls: Type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+    ) -> ListT: ...
+
     async def get_list(
         self,
-        query: str,
-        args: Optional[Iterable[Any]] = None,
+        query: str | ExecutableStatement,
+        args: Optional[Iterable[Any]] | Type[ListT | list[Any]] = None,
         cls: Type[ListT | list[Any]] = list,
         /,
         *cls_args: Any,
@@ -1371,8 +1518,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>
         >>> asyncio.run(main())
 
-        :param query: Query to execute
-        :param args: Arguments to the query
+        :param query: Query to execute (or sqlfactory statement)
+        :param args: Arguments to the query. If query is sqlfactory statement, this argument is used as `cls`.
         :param cls: See Result.fetch_list for details
         :param cls_args: See Result.fetch_list for details
         :param cls_kwargs: See Result.fetch_list for details
@@ -1384,7 +1531,13 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         with _SL():
             return await self._get(lambda res: res.fetch_list, query, args, cls, *cls_args, **cls_kwargs)
 
-    async def get_scalar(self, query: str, args: Optional[Iterable[Any]] = None) -> Any:
+    @overload
+    async def get_scalar(self, query: str, args: Optional[Iterable[Any]] = None) -> Any: ...
+
+    @overload
+    async def get_scalar(self, query: ExecutableStatement) -> Any: ...
+
+    async def get_scalar(self, query: str | ExecutableStatement, args: Optional[Iterable[Any]] = None) -> Any:
         """
         Retrieve single value from the database. The query must return exactly one row and that
         row must contain exactly one column, which is then returned from this method.
@@ -1404,17 +1557,21 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>
         >>> asyncio.run(main())
 
-        :param query: Query to execute
-        :param args: Query arguments.
+        :param query: Query to execute (or sqlfactory statement)
+        :param args: Query arguments. Only if query is str, ignored for sqlfactory statement.
         :return: Value of first column of the first row of the result set.
         :raises: `LogicError` if query did not return a result set (i.e. modifying query instead of SELECT).
         :raises: `EntityNotFound` if query returned a result set, but it was empty.
         :raises: `TooManyRowsError` if query returned more than single row or a row contains more than single column.
         """
         with _SL():
-            row: Sequence[Any] = await self.get_list(query, args)
+            if isinstance(query, ExecutableStatement):
+                row: Sequence[Any] = await self.get_list(query)
+            else:
+                row = await self.get_list(query, args)
+
             if len(row) != 1:
-                raise TooManyRowsError(query, "Result must contain only one column to be fetched as scalar.")
+                raise TooManyRowsError(str(query), "Result must contain only one column to be fetched as scalar.")
 
             return row[0]
 

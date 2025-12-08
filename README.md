@@ -7,7 +7,7 @@ Currently, only MySQL (aiomysql) is supported, but support for other databases s
 
 ## Documentation
 
-API documentation is available at https://asyncdb.gcm.cz/
+API documentation is available at https://gcm-cz.gitlab.io/gcm-asyncdb
 
 ## Installation
 

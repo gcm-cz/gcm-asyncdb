@@ -18,6 +18,7 @@ Currently supported backend connectors:
 - Structured logging with various loggers for various tasks, per-database logger, correct stack level.
 - Exception hierarchy for correct and easier error handling.
 - Timezone-aware datetimes (with possible fallback to naive datetimes).
+- Native support for [sqlfactory](https://gitlab.com/gcm-cz/sqlfactory) statements.
 
 ## Installation and basic usage
 
@@ -291,6 +292,26 @@ async with Transaction(connection) as trx:
 
     # Explicit commit is still required.
     await trx.commit()
+```
+
+## Native sqlfactory support
+
+```python
+from asyncdb.aiomysql import Transaction
+
+connection: AioMySQLConnection = ...
+
+async with Transaction(connection) as trx:
+    res = await trx.query(Select(
+        "*",
+        table="products",
+        where=Gt("id", 100)
+    ))
+
+    async for row in res.fetch_all_object():
+        print(f"ID: {row.id}, name: {row.name}, price: {row.price}")
+
+    print(f"Number of products = {await trx.get_scalar(Select(Count('id'), table='products'))}")
 ```
 
 """
