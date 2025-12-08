@@ -1113,7 +1113,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
             if isinstance(query, ExecutableStatement):
                 res = await self.query(query)
             else:
-                res = await self.query(query, *(args or []))
+                res = await self.query(query, *(cast(Iterable[Any] | None, args) or []))
 
             if not isinstance(res, Result) or isinstance(res, BoolResult):
                 raise LogicError(str(query), "Query did not return result.")
@@ -1222,9 +1222,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
 
     @overload
-    async def get_object(
-        self, query: ExecutableStatement, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
-    ) -> OBJ:
+    async def get_object(self, query: ExecutableStatement, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any) -> OBJ:
         """
         Retrieve single object from the database. The query must return exactly one row, which will be
         converted to object using standard `Result.fetch_object()` of specified type.
