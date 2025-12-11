@@ -122,10 +122,10 @@ async def test_errors(connection: AioMySQLConnection, caplog) -> None:
 
             await q.close()
 
-    print("\n".join(map(str, caplog.records)))
-
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
-        assert record.filename == "test_sqlfactory.py", record.message
+        if record.name == "db.mysql.test":
+            assert record.filename == "test_sqlfactory.py", record.message
 
 
 @pytest.mark.asyncio

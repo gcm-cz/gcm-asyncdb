@@ -6,7 +6,8 @@ from functools import wraps
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, Self, Type, cast, overload
 
-from tenacity import RetryCallState, retry, retry_if_exception_type
+from tenacity import RetryCallState, retry, retry_any
+from tenacity.retry import RetryBaseT
 from tenacity.stop import StopBaseT
 from tenacity.wait import WaitBaseT
 from typing_extensions import deprecated
@@ -14,9 +15,9 @@ from typing_extensions import deprecated
 from .._sl import _SL
 from .._sqlfactory_compat import ExecutableStatement
 from ..asyncdb import Transaction as AsyncTransactionBase
-from ..exceptions import Deadlock, LogicError
+from ..exceptions import LogicError
 from ..generics import ArgsT
-from .config import DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
+from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
 from .cursor import Cursor
 from .error import _query_error_factory
 from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
@@ -75,6 +76,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         observers: Optional[Collection[TransactionObserver]] = None,
         retry_stop: Optional[StopBaseT] = None,
         retry_wait: Optional[WaitBaseT] = None,
+        retry_retry: Optional[RetryBaseT] = None,
     ):
         """
         Create new transaction on top of existing AioMySQLConnection.
@@ -101,6 +103,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param observers: Collection of observers to attach to the transaction.
         :param retry_stop: Optional tenacity stop condition for deadlock retries.
         :param retry_wait: Optional tenacity wait condition for deadlock retries.
+        :param retry_retry: Optional tenacity retry condition for deadlock retries.
         """
         super().__init__(connection)
 
@@ -113,6 +116,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         self._retry_stop = retry_stop
         self._retry_wait = retry_wait
+        self._retry_retry = retry_retry
 
         self._cursor_clean = True
 
@@ -718,6 +722,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         :param retry_state: Retry state.
         """
+        # Stacklevel 4 is for Tenacity's internals (3) + retry decorator (1).
         with _SL(4):
             if not await self.is_committed():
                 await self.rollback()
@@ -741,28 +746,30 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             await self.reset()
 
     @overload
-    def deadlock_retry(
+    def retry(
         self,
         /,
         func: Optional[Callable[..., Awaitable[Any]]] = None,
     ) -> Callable[..., Awaitable[Any]]: ...
 
     @overload
-    def deadlock_retry(
+    def retry(
         self,
         /,
         *,
         retry_wait: Optional[WaitBaseT] = None,
         retry_stop: Optional[StopBaseT] = None,
+        retry_retry: Optional[RetryBaseT] = None,
     ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]: ...
 
-    def deadlock_retry(
+    def retry(
         self,
         /,
         func: Optional[Callable[..., Awaitable[Any]]] = None,
         *,
         retry_wait: Optional[WaitBaseT] = None,
         retry_stop: Optional[StopBaseT] = None,
+        retry_retry: Optional[RetryBaseT] = None,
     ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]] | Callable[..., Awaitable[Any]]:
         """
         Constructs decorator to decorate methods that should be retried in case of deadlock. Note that you must retry the whole
@@ -772,7 +779,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         >>> # Initialize transaction as usual
         >>> async with Transaction() as trx:
-        >>>     @trx.deadlock_retry
+        >>>     @trx.retry  # @trx.deadlock_retry() works too.
         >>>     async def retry_block():
         >>>         # Transaction logic goes here.
         >>>         await trx.query("SELECT 1")
@@ -784,7 +791,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>> from tenacity import wait_fixed, stop_after_attempt
         >>>
         >>> async with Transaction() as trx:
-        >>>     @trx.deadlock_retry(
+        >>>     @trx.retry(
         >>>         retry_wait=wait_fixed(2),  # Wait 2 seconds between retries
         >>>         retry_stop=stop_after_attempt(5)  # Stop after 5 attempts
         >>>     )
@@ -794,14 +801,22 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>>
         >>>     await retry_block()
 
-        :param retry_wait: Wait strategy for retries. If None, uses factory's default.
-        :param retry_stop: Stop strategy for retries. If None, uses factory's default.
-        :return: Function decorator to wrap the function to be retried.
+        :param retry_wait: Wait strategy for retries. If None, uses Transaction's default.
+            See https://tenacity.readthedocs.io/en/latest/api.html#wait-functions for possible wait strategies.
+        :param retry_stop: Stop strategy for retries. If None, uses Transaction's default.
+            See https://tenacity.readthedocs.io/en/latest/api.html#stop-functions for possible stop strategies.
+        :param retry_retry: Retry strategy for retries. If None, uses Transaction's default.
+            Note that `Deadlock` is always retried. See https://tenacity.readthedocs.io/en/latest/api.html#retry-functions
+            for possible retry strategies.
+        :return: Function decorator to wrap the function to be retried, or decorated function if called without arguments.
         """
+
+        if not retry_retry:
+            retry_retry = self._retry_retry
 
         def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
             @retry(
-                retry=retry_if_exception_type(Deadlock),
+                retry=retry_any(DEFAULT_RETRY, retry_retry) if retry_retry else DEFAULT_RETRY,  # type: ignore[arg-type]
                 wait=retry_wait or self._retry_wait or DEFAULT_RETRY_WAIT,
                 stop=retry_stop or self._retry_stop or DEFAULT_RETRY_STOP,
                 reraise=True,

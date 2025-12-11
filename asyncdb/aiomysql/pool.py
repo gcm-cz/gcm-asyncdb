@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional, Type
 
 import aiomysql
+from tenacity.retry import RetryBaseT
 from tenacity.stop import StopBaseT
 from tenacity.wait import WaitBaseT
 
@@ -166,6 +167,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         *,
         retry_stop: Optional[StopBaseT] = None,
         retry_wait: Optional[WaitBaseT] = None,
+        retry_retry: Optional[RetryBaseT] = None,
         stacklevel: int = 1,
     ) -> Transaction:
         # pylint: disable=arguments-differ
@@ -175,6 +177,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :param isolation_level: Transaction isolation level.
         :param retry_stop: Tenacity stop strategy for deadlock retries. If None, default from pool configuration will be used.
         :param retry_wait: Tenacity wait strategy for deadlock retries. If None, default from pool configuration will be used.
+        :param retry_retry: Tenacity retry strategy for deadlock retries. If None, default from pool configuration will be used.
         :param stacklevel: Stack level to skip when logging.
         :return: Instance of transaction class.
         """
@@ -184,6 +187,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
             observers=self._transaction_observers,
             retry_stop=retry_stop,
             retry_wait=retry_wait,
+            retry_retry=retry_retry,
         )
 
 
@@ -195,6 +199,7 @@ async def transaction(
     *,
     retry_stop: Optional[StopBaseT] = None,
     retry_wait: Optional[WaitBaseT] = None,
+    retry_retry: Optional[RetryBaseT] = None,
 ) -> AsyncGenerator[Transaction, None]:
     """
     Return database transaction from the pool as async context.
@@ -204,6 +209,7 @@ async def transaction(
             isolation_level=isolation_level,
             retry_stop=retry_stop,
             retry_wait=retry_wait,
+            retry_retry=retry_retry,
         ),
         timeout or pool.config.connect_timeout,
     ) as trans:

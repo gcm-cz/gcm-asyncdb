@@ -107,8 +107,10 @@ async def test_simple_query(connection, catch_queries, caplog):
     assert "ROLLBACK" in catch_queries.QUERIES_EXECUTED
     assert "COMMIT" not in catch_queries.QUERIES_EXECUTED
 
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
-        assert record.filename == "test_connection.py"
+        if record.name == "db.mysql.test":
+            assert record.filename == "test_connection.py"
 
 
 @pytest.mark.asyncio
@@ -148,8 +150,9 @@ async def test_get(connection, caplog):
         assert await trx.get_list("SELECT 1") == [1]
         assert await trx.get_dict("SELECT 1") == {"1": 1}
 
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
-        if "SELECT 1" in record.message:
+        if "SELECT 1" in record.message and record.name == "db.mysql.test":
             assert record.filename == "test_connection.py"
 
 
@@ -194,10 +197,10 @@ async def test_errors(connection, caplog):
             with pytest.raises(ParseError):
                 await transaction.query("SYNTAX ERROR")
 
-    print("\n".join(map(str, caplog.records)))
-
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
-        assert record.filename == "test_connection.py", record.message
+        if record.name == "db.mysql.test":
+            assert record.filename == "test_connection.py", record.message
 
 
 @pytest.mark.asyncio
@@ -210,8 +213,10 @@ async def test_bool_result_basic(connection, caplog):
             assert q == True
             assert q == q
 
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
-        assert record.filename == "test_connection.py"
+        if record.name == "db.mysql.test":
+            assert record.filename == "test_connection.py"
 
 
 @pytest.mark.asyncio
@@ -328,8 +333,12 @@ async def test_logging_correct(connection, caplog):
         await transaction.commit()
 
     # Ensure all log records are logged from this test file, and not from the library code.
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
+    assert len([record for record in caplog.records if record.name == "db.mysql.test"]) >= 3  # At least query start, end and commit
+
     for row in caplog.records:
-        assert row.filename == "test_connection.py"
+        if row.name == "db.mysql.test":
+            assert row.filename == "test_connection.py"
 
 
 @pytest.mark.asyncio

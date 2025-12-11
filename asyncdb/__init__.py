@@ -314,6 +314,50 @@ async with Transaction(connection) as trx:
     print(f"Number of products = {await trx.get_scalar(Select(Count('id'), table='products'))}")
 ```
 
+## Built-in retrying support
+
+There are several cases of database errors which requires user to restart transaction - speaking of deadlock and lock wait
+timeouts. Asyncdb has built-in support for retrying user code for such errors.
+
+There are two possible use cases - retrying a specific code block, or retrying the whole transaction. Which one approach
+you choose depends on circumstances.
+
+### Retrying a specific code block
+
+This approach uses a new connection from the pool each time the block is retried. Using this approach, you can optionally
+retry connection problems (see `TransactionFactory.__init__` for detailed documentation of possible retry scenarios).
+
+```python
+from asyncdb.aiomysql import TransactionFactory
+
+factory = TransactionFactory(...)
+
+async for attempt in factory.retry():
+    async with attempt as trx:
+        # Your transaction code here.
+        await trx.query("INSERT INTO ...")
+        await trx.commit()
+```
+
+### Retrying the whole function
+
+This approach reuses the same connection to the database, only starts a new transaction on each retry. When the connection is
+unhealthy, this retry usage won't fix it.
+
+```python
+from asyncdb.aiomysql import TransactionFactory
+
+factory = TransactionFactory(...)
+
+async with factory.transaction() as trx:
+    @trx.retry
+    async def retry_block() -> None:
+        await trx.query("INSERT INTO ...")
+        await trx.commit()
+
+    await retry_block()
+```
+
 """
 
 from logging import getLogger

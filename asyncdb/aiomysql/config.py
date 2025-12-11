@@ -2,9 +2,12 @@ from dataclasses import dataclass
 from datetime import timezone, tzinfo
 from typing import Optional, Protocol
 
-from tenacity import stop_after_delay, wait_exponential
+from tenacity import retry_if_exception_type, stop_after_delay, wait_exponential
+from tenacity.retry import RetryBaseT
 from tenacity.stop import StopBaseT
 from tenacity.wait import WaitBaseT
+
+from asyncdb.exceptions import Deadlock
 
 
 class MySQLConfigProtocol(Protocol):
@@ -126,6 +129,9 @@ class MySQLConfig(MySQLConfigProtocol):  # pylint: disable=too-many-instance-att
     remote_app: Optional[str] = None
     timezone: Optional[tzinfo] = timezone.utc
 
+
+DEFAULT_RETRY: RetryBaseT = retry_if_exception_type(Deadlock)
+""" Default retry condition for retrying transactions. """
 
 DEFAULT_RETRY_STOP: StopBaseT = stop_after_delay(10)
 """ Default retry stop strategy for retrying transactions. """
