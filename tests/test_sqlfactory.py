@@ -87,11 +87,11 @@ async def test_errors(connection: AioMySQLConnection, caplog: pytest.LogCaptureF
 async def test_fetching_dict(connection: AioMySQLConnection) -> None:
     rows: list[dict[str, Any]] = []
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         async for row in q.fetch_all_dict():
             assert isinstance(row, dict)
             rows.append(row)
@@ -109,11 +109,11 @@ class CustomDict(dict[str, Any]):
 async def test_fetching_dict_custom(connection: AioMySQLConnection) -> None:
     rows: list[dict[str, Any]] = []
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         async for row in q.fetch_all_dict(CustomDict):
             assert isinstance(row, CustomDict)
             rows.append(row)
@@ -127,11 +127,11 @@ async def test_fetching_dict_custom(connection: AioMySQLConnection) -> None:
 async def test_fetch_list(connection: AioMySQLConnection) -> None:
     rows: list[list[Any]] = []
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         async for row in q.fetch_all_list():
             assert isinstance(row, list)
             rows.append(row)
@@ -149,11 +149,11 @@ class CustomList(list[Any]):
 async def test_fetch_list_custom(connection: AioMySQLConnection) -> None:
     rows: list[list[Any]] = []
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         async for row in q.fetch_all_list(CustomList):
             assert isinstance(row, CustomList)
             rows.append(row)
@@ -168,11 +168,11 @@ async def test_fetch_object(connection: AioMySQLConnection) -> None:
     rows: list[ResultRow] = []
 
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         async for row in q.fetch_all_object():
             assert isinstance(row, ResultRow)
             rows.append(row)
@@ -199,11 +199,11 @@ async def test_fetch_custom_object(connection: AioMySQLConnection) -> None:
     rows: list[CustomObject] = []
 
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         async for row in q.fetch_all_object(CustomObject, as_kwargs=True):
             assert isinstance(row, CustomObject)
             rows.append(row)
@@ -218,11 +218,11 @@ async def test_fetch_custom_object(connection: AioMySQLConnection) -> None:
 @pytest.mark.asyncio
 async def test_fetch_scalar(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
-        q = await trx.query(UnionAll(
-            Select(Aliased(Value(1), alias="a")),
-            Select(Aliased(Value(2), alias="a")),
-            Select(Aliased(Value(3), alias="a"))
-        ))
+        q = await trx.query(
+            UnionAll(
+                Select(Aliased(Value(1), alias="a")), Select(Aliased(Value(2), alias="a")), Select(Aliased(Value(3), alias="a"))
+            )
+        )
         assert await q.fetch_all_scalar() == [1, 2, 3]
         await trx.commit()
 

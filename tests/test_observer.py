@@ -20,7 +20,7 @@ class QueryObserverForTest(QueryObserver):
         self.after = True
 
     def observe_query_error(
-            self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, **kwargs: Any
+        self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, **kwargs: Any
     ) -> None:
         self.error = True
 
@@ -61,7 +61,7 @@ class TransactionObserverForTest(TransactionObserver):
         self.after = True
 
     def observe_query_error(
-            self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, trx_context: Any, **kwargs: Any
+        self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, trx_context: Any, **kwargs: Any
     ) -> None:
         self.error = True
 
@@ -116,10 +116,7 @@ async def test_query_observer_from_factory(config: MySQLConfig) -> None:
     try:
         observer = QueryObserverForTest()
 
-        factory = TransactionFactory(
-            config=config,
-            connection_observers=[observer]
-        )
+        factory = TransactionFactory(config=config, connection_observers=[observer])
 
         async with factory.transaction() as trx:
             res = await trx.query("SELECT 1")
@@ -201,10 +198,7 @@ async def test_transaction_observer_factory(config: MySQLConfig) -> None:
     observer = TransactionObserverForTest()
 
     try:
-        factory = TransactionFactory(
-            config=config,
-            transaction_observers=[observer]
-        )
+        factory = TransactionFactory(config=config, transaction_observers=[observer])
 
         with pytest.warns(ImplicitRollback):
             async with factory.transaction() as trx:

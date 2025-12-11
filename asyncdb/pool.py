@@ -593,15 +593,15 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         finally:
             self._connections_in_use -= 1
 
-    async def close_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:  # pylint: disable=no-self-use
+    async def close_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:
         """Close one connection."""
         try:
             if asyncio.iscoroutinefunction(conn.close):
                 await conn.close()
             else:
                 conn.close()
-        except Exception as exc:
-            self.log.error("While closing connection: %r", exc)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.log.exception("While closing connection %r: %s", conn, exc)
 
     async def close_connections(self) -> None:
         """

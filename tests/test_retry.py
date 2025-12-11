@@ -12,12 +12,15 @@ from .conftest import CatchQueryObserver
 
 
 @pytest.mark.asyncio
-async def test_retry_reraises(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
+async def test_retry_reraises(
+    factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture
+) -> None:
     catch_queries.clear()
     caplog.clear()
 
     with pytest.warns(ImplicitRollback):
         async with factory.transaction() as trx:
+
             @trx.retry(retry_stop=stop_after_attempt(2))
             async def retry_block() -> None:
                 await trx.query("SELECT 'a'")
@@ -29,9 +32,7 @@ async def test_retry_reraises(factory: TransactionFactory, catch_queries: CatchQ
                 await trx.commit()  # This line won't be called.
 
     # Ensure all the transaction queries were executed.
-    assert catch_queries.QUERIES_EXECUTED[-6:] == [
-        "BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "ROLLBACK"
-    ]
+    assert catch_queries.QUERIES_EXECUTED[-6:] == ["BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "ROLLBACK"]
 
     # Ensure the deadlock is logged.
     assert "Simulated deadlock" in caplog.text
@@ -43,8 +44,7 @@ async def test_retry_reraises(factory: TransactionFactory, catch_queries: CatchQ
     QUERIES = 3  # BEGIN, SELECT, ROLLBACK
     LOG_PER_QUERY = 2  # "Executing ...", "Took"
     assert len([row for row in caplog.records if row.name == "db.mysql.test"]) == (
-        (ATTEMPTS * QUERIES * LOG_PER_QUERY) +
-        (ATTEMPTS - 1)  # Last attempt fails with original exception, no retry is logged.
+        (ATTEMPTS * QUERIES * LOG_PER_QUERY) + (ATTEMPTS - 1)  # Last attempt fails with original exception, no retry is logged.
     )
 
     for row in caplog.records:
@@ -53,7 +53,9 @@ async def test_retry_reraises(factory: TransactionFactory, catch_queries: CatchQ
 
 
 @pytest.mark.asyncio
-async def test_retry_succeeds(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
+async def test_retry_succeeds(
+    factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture
+) -> None:
     catch_queries.clear()
     caplog.clear()
 
@@ -76,7 +78,15 @@ async def test_retry_succeeds(factory: TransactionFactory, catch_queries: CatchQ
 
     # Ensure all the transaction queries were executed.
     assert catch_queries.QUERIES_EXECUTED[-9:] == [
-        "BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "COMMIT"
+        "BEGIN",
+        "SELECT 'a'",
+        "ROLLBACK",
+        "BEGIN",
+        "SELECT 'a'",
+        "ROLLBACK",
+        "BEGIN",
+        "SELECT 'a'",
+        "COMMIT",
     ]
 
     # Ensure the deadlock is logged.
@@ -98,7 +108,9 @@ async def test_retry_succeeds(factory: TransactionFactory, catch_queries: CatchQ
 
 
 @pytest.mark.asyncio
-async def test_retry_context_reraises(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
+async def test_retry_context_reraises(
+    factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture
+) -> None:
     catch_queries.clear()
     caplog.clear()
 
@@ -110,9 +122,7 @@ async def test_retry_context_reraises(factory: TransactionFactory, catch_queries
                     raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
 
     # Ensure all the transaction queries were executed.
-    assert catch_queries.QUERIES_EXECUTED[-6:] == [
-        "BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "ROLLBACK"
-    ]
+    assert catch_queries.QUERIES_EXECUTED[-6:] == ["BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "ROLLBACK"]
 
     # Ensure the deadlock is logged.
     assert "Simulated deadlock" in caplog.text
@@ -132,7 +142,9 @@ async def test_retry_context_reraises(factory: TransactionFactory, catch_queries
 
 
 @pytest.mark.asyncio
-async def test_retry_context_succeeds(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
+async def test_retry_context_succeeds(
+    factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture
+) -> None:
     catch_queries.clear()
     caplog.clear()
 
@@ -150,7 +162,15 @@ async def test_retry_context_succeeds(factory: TransactionFactory, catch_queries
 
     # Ensure all the transaction queries were executed.
     assert catch_queries.QUERIES_EXECUTED[-9:] == [
-        "BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "ROLLBACK", "BEGIN", "SELECT 'a'", "COMMIT"
+        "BEGIN",
+        "SELECT 'a'",
+        "ROLLBACK",
+        "BEGIN",
+        "SELECT 'a'",
+        "ROLLBACK",
+        "BEGIN",
+        "SELECT 'a'",
+        "COMMIT",
     ]
 
     # Ensure the deadlock is logged.

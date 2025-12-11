@@ -161,8 +161,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         self.log.debug("Closing connection %r.", conn)
         try:
             await conn.ensure_closed()
-        except Exception as exc:
-            self.log.exception("Error while closing connection %r: %r", conn, exc)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.log.exception("While closing connection %r: %s", conn, exc)
 
     async def get_transaction(  # type: ignore[override]
         self,

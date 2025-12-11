@@ -16,7 +16,7 @@ from typing_extensions import deprecated
 from .._sl import _SL
 from .._sqlfactory_compat import ExecutableStatement
 from ..asyncdb import Transaction as AsyncTransactionBase
-from ..exceptions import LogicError, ImplicitRollback
+from ..exceptions import ImplicitRollback, LogicError
 from ..generics import ArgsT
 from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
 from .cursor import Cursor

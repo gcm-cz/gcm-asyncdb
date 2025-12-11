@@ -42,7 +42,9 @@ async def connection_naive_dt(config: MySQLConfig) -> AsyncGenerator[AioMySQLCon
 
 
 @pytest.mark.asyncio
-async def test_simple_query(connection: AioMySQLConnection, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
+async def test_simple_query(
+    connection: AioMySQLConnection, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture
+) -> None:
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as trx:
             catch_queries.clear()
@@ -131,6 +133,7 @@ async def test_operation_after_commit(connection: AioMySQLConnection) -> None:
 
             with pytest.raises(LogicError):
                 await transaction.query("ANYTHING")
+
 
 @pytest.mark.asyncio
 async def test_errors(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
@@ -229,10 +232,12 @@ async def test_aware_datetime_different_tz(connection: AioMySQLConnection) -> No
         assert transaction.connection.timezone == timezone.utc
 
         await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `ts` TIMESTAMP, `d` DATE, `t` TIME)")
-        await transaction.query("INSERT INTO `test` (`dt`, `ts`, `d`, `t`) VALUES (%s, %s, %s, %s)", dt, dt, dt.date(), dt.timetz())  # Insert date in different timezone
+        await transaction.query(
+            "INSERT INTO `test` (`dt`, `ts`, `d`, `t`) VALUES (%s, %s, %s, %s)", dt, dt, dt.date(), dt.timetz()
+        )  # Insert date in different timezone
 
         # Check whether the physically stored date is in UTC.
-        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == 'a2021-01-03 18:15:16'
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == "a2021-01-03 18:15:16"
         assert await transaction.get_scalar("SELECT CONCAT('a', `ts`) FROM `test`") == "a2021-01-03 18:15:16"
         assert await transaction.get_scalar("SELECT CONCAT('a', `d`) FROM `test`") == "a2021-01-03"
         assert await transaction.get_scalar("SELECT CONCAT('a', `t`) FROM `test`") == "a13:15:16"
@@ -259,13 +264,15 @@ async def test_aware_datetime_different_tz(connection: AioMySQLConnection) -> No
 async def test_datetime_ms(connection: AioMySQLConnection) -> None:
     async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
         dt = datetime(2021, 1, 3, 13, 15, 16, 123456, tzinfo=timezone.utc)
-        await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `dt_ms` DATETIME(6), `ts` TIMESTAMP, `ts_ms` TIMESTAMP(6))")
+        await transaction.query(
+            "CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `dt_ms` DATETIME(6), `ts` TIMESTAMP, `ts_ms` TIMESTAMP(6))"
+        )
         await transaction.query("INSERT INTO `test` (`dt`, `dt_ms`, `ts`, `ts_ms`) VALUES (%s, %s, %s, %s)", dt, dt, dt, dt)
 
-        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == 'a2021-01-03 13:15:16'
-        assert await transaction.get_scalar("SELECT CONCAT('a', `dt_ms`) FROM `test`") == 'a2021-01-03 13:15:16.123456'
-        assert await transaction.get_scalar("SELECT CONCAT('a', `ts`) FROM `test`") == 'a2021-01-03 13:15:16'
-        assert await transaction.get_scalar("SELECT CONCAT('a', `ts_ms`) FROM `test`") == 'a2021-01-03 13:15:16.123456'
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == "a2021-01-03 13:15:16"
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt_ms`) FROM `test`") == "a2021-01-03 13:15:16.123456"
+        assert await transaction.get_scalar("SELECT CONCAT('a', `ts`) FROM `test`") == "a2021-01-03 13:15:16"
+        assert await transaction.get_scalar("SELECT CONCAT('a', `ts_ms`) FROM `test`") == "a2021-01-03 13:15:16.123456"
 
         fetched_dt: datetime = await transaction.get_scalar("SELECT `dt` FROM `test`")
         assert fetched_dt == dt.replace(microsecond=0)
@@ -293,7 +300,9 @@ async def test_logging_correct(connection: AioMySQLConnection, caplog: pytest.Lo
 
     # Ensure all log records are logged from this test file, and not from the library code.
     assert any(record.name == "db.mysql.test" for record in caplog.records)
-    assert len([record for record in caplog.records if record.name == "db.mysql.test"]) >= 3  # At least query start, end and commit
+    assert (
+        len([record for record in caplog.records if record.name == "db.mysql.test"]) >= 3
+    )  # At least query start, end and commit
 
     for row in caplog.records:
         if row.name == "db.mysql.test":
@@ -644,6 +653,7 @@ async def test_objectfetcher(connection: AioMySQLConnection) -> None:
 
         await trx.commit()
 
+
 @pytest.mark.asyncio
 async def test_transaction_isolation_level(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     async with Transaction(connection, isolation_level=TransactionIsolationLevel.SERIALIZABLE) as trx:
@@ -746,7 +756,6 @@ async def test_entity_not_found(connection: AioMySQLConnection) -> None:
             await trx.get_object("SELECT `id` FROM `test` WHERE `id` = 3")
 
         await trx.commit()
-
 
 
 @pytest.mark.asyncio
