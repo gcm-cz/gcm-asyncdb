@@ -1,8 +1,9 @@
+import asyncio
 import os
 import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import pytest
 from dateutil import tz
@@ -10,75 +11,21 @@ from dateutil import tz
 from asyncdb import LogicError, ObjectFetcher, ResultRow
 from asyncdb.aiomysql import (
     AioMySQLConnection,
-    MySQLConfig,
-    QueryObserver,
     Transaction,
-    TransactionFactory,
     TransactionIsolationLevel,
+    MySQLConfig,
+    TransactionFactory,
 )
 from asyncdb.aiomysql.pool import transaction
 from asyncdb.aiomysql.result import BoolResult
 from asyncdb.exceptions import DuplicateEntry, EntityNotFound, Error, ImplicitRollback, ParseError, ScrollIndexError
 from asyncdb.pool import transaction as generic_transaction
 
-config = MySQLConfig(
-    host=os.getenv("TEST_MYSQL_HOST", "localhost"),
-    port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
-    user=os.getenv("TEST_MYSQL_USER", "root"),
-    password=os.getenv("TEST_MYSQL_PASSWORD", ""),
-    database=os.getenv("TEST_MYSQL_DATABASE", "test"),
-    max_pool_size=1,
-)
-
-
-class TestQueryObserver(QueryObserver):
-    def __init__(self):
-        super().__init__()
-        self.QUERIES_EXECUTED = []
-
-    def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs: Any) -> Any:
-        self.QUERIES_EXECUTED.append(query)
-
-    def clear(self):
-        self.QUERIES_EXECUTED.clear()
+from .conftest import CatchQueryObserver
 
 
 @pytest.fixture(scope="function")
-def catch_queries():
-    return TestQueryObserver()
-
-
-@pytest.fixture(scope="function")
-async def connection(catch_queries):
-    conn = AioMySQLConnection(
-        host=config.host,
-        port=config.port,
-        user=config.user,
-        password=config.password,
-        db=config.database,
-    )
-    conn.attach(catch_queries)
-
-    yield conn
-
-    await conn.ensure_closed()
-
-
-@pytest.fixture(scope="function")
-async def factory(catch_queries):
-    factory = TransactionFactory(
-        config=config,
-        connection_observers=[catch_queries],
-    )
-    yield factory
-
-    for pool in TransactionFactory._pool_cache.values():
-        await pool.close()
-
-    TransactionFactory._pool_cache.clear()
-
-@pytest.fixture(scope="function")
-async def connection_naive_dt():
+async def connection_naive_dt(config: MySQLConfig) -> AsyncGenerator[AioMySQLConnection, None]:
     conn = AioMySQLConnection(
         host=config.host,
         port=config.port,
@@ -88,12 +35,14 @@ async def connection_naive_dt():
         timezone=None,
     )
 
-    yield conn
-    await conn.ensure_closed()
+    try:
+        yield conn
+    finally:
+        await conn.ensure_closed()
 
 
 @pytest.mark.asyncio
-async def test_simple_query(connection, catch_queries, caplog):
+async def test_simple_query(connection: AioMySQLConnection, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as trx:
             catch_queries.clear()
@@ -114,7 +63,7 @@ async def test_simple_query(connection, catch_queries, caplog):
 
 
 @pytest.mark.asyncio
-async def test_rollback_when_exception(connection, catch_queries):
+async def test_rollback_when_exception(connection: AioMySQLConnection, catch_queries: CatchQueryObserver) -> None:
     with pytest.raises(TypeError):
         with pytest.warns(ImplicitRollback):
             async with Transaction(connection) as trx:
@@ -129,7 +78,7 @@ async def test_rollback_when_exception(connection, catch_queries):
 
 
 @pytest.mark.asyncio
-async def test_rollback_factory_when_exception(factory, catch_queries):
+async def test_rollback_factory_when_exception(factory: TransactionFactory, catch_queries: CatchQueryObserver) -> None:
     with pytest.raises(TypeError):
         with pytest.warns(ImplicitRollback):
             async with factory.transaction() as trx:
@@ -144,11 +93,12 @@ async def test_rollback_factory_when_exception(factory, catch_queries):
 
 
 @pytest.mark.asyncio
-async def test_get(connection, caplog):
+async def test_get(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     async with Transaction(connection) as trx:
         assert await trx.get_scalar("SELECT 1") == 1
         assert await trx.get_list("SELECT 1") == [1]
         assert await trx.get_dict("SELECT 1") == {"1": 1}
+        await trx.commit()
 
     assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
@@ -157,7 +107,7 @@ async def test_get(connection, caplog):
 
 
 @pytest.mark.asyncio
-async def test_commit(connection, catch_queries):
+async def test_commit(connection: AioMySQLConnection, catch_queries: CatchQueryObserver) -> None:
     async with Transaction(connection) as trx:
         catch_queries.clear()
         q = await trx.query("SELECT 1")
@@ -171,7 +121,7 @@ async def test_commit(connection, catch_queries):
 
 
 @pytest.mark.asyncio
-async def test_operation_after_commit(connection):
+async def test_operation_after_commit(connection: AioMySQLConnection) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
 
@@ -182,9 +132,8 @@ async def test_operation_after_commit(connection):
             with pytest.raises(LogicError):
                 await transaction.query("ANYTHING")
 
-
 @pytest.mark.asyncio
-async def test_errors(connection, caplog):
+async def test_errors(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             q = await transaction.query("SELECT 1")
@@ -204,7 +153,7 @@ async def test_errors(connection, caplog):
 
 
 @pytest.mark.asyncio
-async def test_bool_result_basic(connection, caplog):
+async def test_bool_result_basic(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             q = await transaction.query("COMMIT")
@@ -220,7 +169,7 @@ async def test_bool_result_basic(connection, caplog):
 
 
 @pytest.mark.asyncio
-async def test_bool_result_access(connection):
+async def test_bool_result_access(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         res = await trx.query("COMMIT")
 
@@ -238,9 +187,11 @@ async def test_bool_result_access(connection):
         with pytest.raises(Error):
             await res.fetch_all_scalar()
 
+        await trx.commit()
+
 
 @pytest.mark.asyncio
-async def test_naive_datetime(connection_naive_dt):
+async def test_naive_datetime(connection_naive_dt: AioMySQLConnection) -> None:
     async with Transaction(connection_naive_dt) as transaction:
         dt: datetime = await transaction.get_scalar("SELECT CAST('2021-01-03 13:15:16' AS DATETIME)")
         assert dt.year == 2021
@@ -251,9 +202,11 @@ async def test_naive_datetime(connection_naive_dt):
         assert dt.second == 16
         assert dt.tzinfo is None
 
+        await transaction.commit()
+
 
 @pytest.mark.asyncio
-async def test_aware_datetime(connection):
+async def test_aware_datetime(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as transaction:
         dt: datetime = await transaction.get_scalar("SELECT CAST('2021-01-03 13:15:16' AS DATETIME)")
         assert dt.year == 2021
@@ -264,9 +217,11 @@ async def test_aware_datetime(connection):
         assert dt.second == 16
         assert dt.tzinfo is timezone.utc
 
+        await transaction.commit()
+
 
 @pytest.mark.asyncio
-async def test_aware_datetime_different_tz(connection):
+async def test_aware_datetime_different_tz(connection: AioMySQLConnection) -> None:
     async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
         dt = datetime(2021, 1, 3, 13, 15, 16, tzinfo=tz.gettz("US/Eastern"))  # UTC-5
 
@@ -297,9 +252,11 @@ async def test_aware_datetime_different_tz(connection):
         fetched_t: timedelta = await transaction.get_scalar("SELECT `t` FROM `test`")
         assert fetched_t.seconds == dt.hour * 3600 + dt.minute * 60 + dt.second
 
+        await transaction.commit()
+
 
 @pytest.mark.asyncio
-async def test_datetime_ms(connection):
+async def test_datetime_ms(connection: AioMySQLConnection) -> None:
     async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
         dt = datetime(2021, 1, 3, 13, 15, 16, 123456, tzinfo=timezone.utc)
         await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `dt_ms` DATETIME(6), `ts` TIMESTAMP, `ts_ms` TIMESTAMP(6))")
@@ -322,9 +279,11 @@ async def test_datetime_ms(connection):
         fetched_dt = await transaction.get_scalar("SELECT `ts_ms` FROM `test`")
         assert fetched_dt == dt
 
+        await transaction.commit()
+
 
 @pytest.mark.asyncio
-async def test_logging_correct(connection, caplog):
+async def test_logging_correct(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     async with Transaction(connection) as transaction:
         caplog.clear()
 
@@ -342,7 +301,7 @@ async def test_logging_correct(connection, caplog):
 
 
 @pytest.mark.asyncio
-async def test_fetching_dict(connection):
+async def test_fetching_dict(connection: AioMySQLConnection) -> None:
     rows: list[dict[str, Any]] = []
     async with Transaction(connection) as trx:
         q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
@@ -360,7 +319,7 @@ class customdict(dict):
 
 
 @pytest.mark.asyncio
-async def test_fetching_dict_custom(connection):
+async def test_fetching_dict_custom(connection: AioMySQLConnection) -> None:
     rows: list[dict[str, Any]] = []
     async with Transaction(connection) as trx:
         q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
@@ -374,7 +333,7 @@ async def test_fetching_dict_custom(connection):
 
 
 @pytest.mark.asyncio
-async def test_fetch_list(connection):
+async def test_fetch_list(connection: AioMySQLConnection) -> None:
     rows: list[list[Any]] = []
     async with Transaction(connection) as trx:
         q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
@@ -392,7 +351,7 @@ class customlist(list):
 
 
 @pytest.mark.asyncio
-async def test_fetch_list_custom(connection):
+async def test_fetch_list_custom(connection: AioMySQLConnection) -> None:
     rows: list[list[Any]] = []
     async with Transaction(connection) as trx:
         q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
@@ -406,7 +365,7 @@ async def test_fetch_list_custom(connection):
 
 
 @pytest.mark.asyncio
-async def test_fetch_object(connection):
+async def test_fetch_object(connection: AioMySQLConnection) -> None:
     rows: list[ResultRow] = []
 
     async with Transaction(connection) as trx:
@@ -433,7 +392,7 @@ class customobject:
 
 
 @pytest.mark.asyncio
-async def test_fetch_custom_object(connection):
+async def test_fetch_custom_object(connection: AioMySQLConnection) -> None:
     rows: list[customobject] = []
 
     async with Transaction(connection) as trx:
@@ -450,7 +409,7 @@ async def test_fetch_custom_object(connection):
 
 
 @pytest.mark.asyncio
-async def test_fetch_scalar(connection):
+async def test_fetch_scalar(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         q = await trx.query("SELECT 1 AS 'a' UNION SELECT 2 AS 'a' UNION SELECT 3 AS 'a'")
         assert await q.fetch_all_scalar() == [1, 2, 3]
@@ -458,7 +417,7 @@ async def test_fetch_scalar(connection):
 
 
 @pytest.mark.asyncio
-async def test_fetch_scalar_multiple_columns(connection):
+async def test_fetch_scalar_multiple_columns(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         with pytest.raises(LogicError):
             await trx.get_scalar("SELECT 'a', 'b', 'c'")
@@ -471,7 +430,7 @@ async def test_fetch_scalar_multiple_columns(connection):
 
 
 @pytest.mark.asyncio
-async def test_last_insert_id_affected_rows(connection):
+async def test_last_insert_id_affected_rows(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         await trx.query("CREATE TEMPORARY TABLE test (id INT AUTO_INCREMENT PRIMARY KEY, a INT)")
         await trx.query("INSERT INTO test (a) VALUES (1)")
@@ -486,102 +445,177 @@ async def test_last_insert_id_affected_rows(connection):
 
 
 @pytest.mark.asyncio
-async def test_dbapi_2_compatibility(connection):
+async def test_dbapi_2_compatibility(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         with pytest.warns(DeprecationWarning):
             await trx.execute("SELECT 1")
-            assert await trx.fetchone() == {"1": 1}
-            await trx.cleanup()
 
-            await trx.execute("SELECT 1")
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchone() == {"1": 1}
+
+        await trx.cleanup()
+
+        with pytest.warns(DeprecationWarning):
+            await trx.execute("SELECT 1")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"1": 1}
+
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchone() == None
 
+        with pytest.warns(DeprecationWarning):
             await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
+
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchall() == [{"a": 1}, {"a": 2}]
 
+        with pytest.warns(DeprecationWarning):
             await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
+
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchmany(1) == [{"a": 1}]
+
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchmany(1) == [{"a": 2}]
+
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchmany(1) == []
 
+        with pytest.warns(DeprecationWarning):
             await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
+
+        with pytest.warns(DeprecationWarning):
             (await trx.cursor).arraysize = 1000
+
+        with pytest.warns(DeprecationWarning):
             assert await trx.fetchmany() == [{"a": 1}, {"a": 2}]
 
+        await trx.commit()
+
 
 @pytest.mark.asyncio
-async def test_dbapi_2_executemany(connection):
+async def test_dbapi_2_executemany(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
-        await trx.execute("CREATE TEMPORARY TABLE test (a INT)")
-        await trx.executemany("INSERT INTO test (a) VALUES (%s)", [(1,), (2,), (3,)])
-        await trx.execute("SELECT * FROM test")
-        await trx.fetchall() == [{"a": 1}, {"a": 2}, {"a": 3}]
+        with pytest.warns(DeprecationWarning):
+            await trx.execute("CREATE TEMPORARY TABLE test (a INT)")
+
+        with pytest.warns(DeprecationWarning):
+            await trx.executemany("INSERT INTO test (a) VALUES (%s)", [(1,), (2,), (3,)])
+
+        with pytest.warns(DeprecationWarning):
+            await trx.execute("SELECT * FROM test")
+
+        with pytest.warns(DeprecationWarning):
+            await trx.fetchall() == [{"a": 1}, {"a": 2}, {"a": 3}]
 
         await trx.commit()
 
 
 @pytest.mark.asyncio
-async def test_dbapi_2_no_result(connection):
+async def test_dbapi_2_no_result(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
-        await trx.execute("CREATE TEMPORARY TABLE test (a INT)")
-        with pytest.raises(LogicError):
-            await trx.fetchone()
+        with pytest.warns(DeprecationWarning):
+            await trx.execute("CREATE TEMPORARY TABLE test (a INT)")
 
         with pytest.raises(LogicError):
-            await trx.fetchall()
+            with pytest.warns(DeprecationWarning):
+                await trx.fetchone()
 
         with pytest.raises(LogicError):
-            await trx.fetchmany(1)
+            with pytest.warns(DeprecationWarning):
+                await trx.fetchall()
 
         with pytest.raises(LogicError):
-            await trx.scroll(0)
+            with pytest.warns(DeprecationWarning):
+                await trx.fetchmany(1)
+
+        with pytest.raises(LogicError):
+            with pytest.warns(DeprecationWarning):
+                await trx.scroll(0)
+
+        await trx.commit()
 
 
 @pytest.mark.asyncio
-async def test_dbapi_2_scroll(connection):
+async def test_dbapi_2_scroll(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
-        await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a` UNION SELECT 3 AS `a`")
-        assert await trx.fetchone() == {"a": 1}
-        assert await trx.fetchone() == {"a": 2}
-        await trx.scroll(0, "absolute")
-        assert await trx.fetchone() == {"a": 1}
+        with pytest.warns(DeprecationWarning):
+            await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a` UNION SELECT 3 AS `a`")
 
-        await trx.scroll(1, "absolute")
-        assert await trx.fetchone() == {"a": 2}
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 1}
 
-        await trx.scroll(-1, "relative")
-        assert await trx.fetchone() == {"a": 2}
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 2}
 
-        await trx.scroll(-2, "relative")
-        assert await trx.fetchone() == {"a": 1}
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(0, "absolute")
 
-        await trx.scroll(0, "relative")
-        assert await trx.fetchone() == {"a": 2}
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 1}
 
-        await trx.scroll(0, "relative")
-        assert await trx.fetchone() == {"a": 3}
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(1, "absolute")
 
-        await trx.scroll(-3, "relative")
-        assert await trx.fetchone() == {"a": 1}
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 2}
 
-        await trx.scroll(1, "relative")
-        assert await trx.fetchone() == {"a": 3}
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(-1, "relative")
 
-        await trx.scroll(-3, "relative")
-        assert await trx.fetchone() == {"a": 1}
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 2}
+
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(-2, "relative")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 1}
+
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(0, "relative")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 2}
+
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(0, "relative")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 3}
+
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(-3, "relative")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 1}
+
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(1, "relative")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 3}
+
+        with pytest.warns(DeprecationWarning):
+            await trx.scroll(-3, "relative")
+
+        with pytest.warns(DeprecationWarning):
+            assert await trx.fetchone() == {"a": 1}
 
         with pytest.raises(IndexError):
-            await trx.scroll(-4)
+            with pytest.warns(DeprecationWarning):
+                await trx.scroll(-4)
 
         with pytest.raises(ScrollIndexError):
-            await trx.scroll(3)
+            with pytest.warns(DeprecationWarning):
+                await trx.scroll(3)
 
         await trx.commit()
 
 
 @pytest.mark.asyncio
-async def test_objectfetcher(connection):
+async def test_objectfetcher(connection: AioMySQLConnection) -> None:
     @dataclass
     class Product:
         id: int
@@ -591,8 +625,11 @@ async def test_objectfetcher(connection):
         out: list[Product] = []
 
         q = await trx.query("SELECT `id`, `name` FROM `products`")
-        async for product in ObjectFetcher[Product](q, Product):
-            out.append(product)
+
+        with pytest.warns(DeprecationWarning):
+            async for product in ObjectFetcher[Product](q, Product):
+                out.append(product)
+
         return out
 
     async with Transaction(connection) as trx:
@@ -608,7 +645,7 @@ async def test_objectfetcher(connection):
         await trx.commit()
 
 @pytest.mark.asyncio
-async def test_transaction_isolation_level(connection, caplog):
+async def test_transaction_isolation_level(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     async with Transaction(connection, isolation_level=TransactionIsolationLevel.SERIALIZABLE) as trx:
         await trx.commit()
 
@@ -623,61 +660,75 @@ async def test_transaction_isolation_level(connection, caplog):
 
 
 @pytest.mark.asyncio
-async def test_query_with_unknown_args(connection):
+async def test_query_with_unknown_args(connection: AioMySQLConnection) -> None:
     with pytest.raises(TypeError):
-        async with Transaction(connection) as trx:
-            await trx.query("SELECT %s")
+        with pytest.warns(ImplicitRollback):
+            async with Transaction(connection) as trx:
+                await trx.query("SELECT %s")
 
 
 @pytest.mark.asyncio
-async def test_factory_call(factory):
-    trx = await anext(factory())
-    assert isinstance(trx, Transaction)
+async def test_factory_call(factory: TransactionFactory) -> None:
+    gen = factory()
+    try:
+        async for trx in gen:
+            assert isinstance(trx, Transaction)
+            await trx.commit()
+            break
+        else:
+            raise AssertionError("No transaction yielded from factory.")
+    finally:
+        await gen.aclose()
 
 
 @pytest.mark.asyncio
-async def test_transaction_function(factory):
+async def test_transaction_function(factory: TransactionFactory) -> None:
     async with transaction(factory.pool) as trx:
         assert isinstance(trx, Transaction)
+        await trx.commit()
 
 
 @pytest.mark.asyncio
-async def test_generic_transaction_function(factory):
+async def test_generic_transaction_function(factory: TransactionFactory) -> None:
     async with generic_transaction(factory.pool) as trx:
         assert isinstance(trx, Transaction)
+        await trx.commit()
 
 
 @pytest.mark.asyncio
-async def test_iterate_result_set(connection):
+async def test_iterate_result_set(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         res = await trx.query("SELECT 1; SELECT 1;")
         assert await res.fetch_all_scalar() == [1, 1]
+        await trx.commit()
 
 
 @pytest.mark.asyncio
-async def test_discard_result(connection):
-    async with Transaction(connection) as trx:
-        res = await trx.query("SELECT 1; SELECT 1;")
-        await res.close()
+async def test_discard_result(connection: AioMySQLConnection):
+    with pytest.warns(ImplicitRollback):
+        async with Transaction(connection) as trx:
+            res = await trx.query("SELECT 1; SELECT 1;")
+            await res.close()
 
-        await trx.query("SELECT 1")  # Should not raise exception
+            await trx.query("SELECT 1")  # Should not raise exception
 
 
 @pytest.mark.asyncio
-async def test_result_not_discarded(connection):
-    async with Transaction(connection) as trx:
-        res = await trx.query("SELECT 1; SELECT 1;")
+async def test_result_not_discarded(connection: AioMySQLConnection) -> None:
+    with pytest.warns(ImplicitRollback):
+        async with Transaction(connection) as trx:
+            res = await trx.query("SELECT 1; SELECT 1;")
 
-        with pytest.raises(LogicError):
+            with pytest.raises(LogicError):
+                await trx.query("SELECT 1")
+
+            await res.close()
+
             await trx.query("SELECT 1")
 
-        await res.close()
-
-        await trx.query("SELECT 1")
-
 
 @pytest.mark.asyncio
-async def test_entity_not_found(connection):
+async def test_entity_not_found(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         await trx.query("CREATE TEMPORARY TABLE `test` (`id` INT PRIMARY KEY, `name` VARCHAR(255))")
         await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")
@@ -694,13 +745,16 @@ async def test_entity_not_found(connection):
         with pytest.raises(EntityNotFound):
             await trx.get_object("SELECT `id` FROM `test` WHERE `id` = 3")
 
+        await trx.commit()
+
 
 
 @pytest.mark.asyncio
-async def test_duplicate_entry(connection):
-    async with Transaction(connection) as trx:
-        await trx.query("CREATE TEMPORARY TABLE `test` (`id` INT PRIMARY KEY, `name` VARCHAR(255))")
-        await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")
-
-        with pytest.raises(DuplicateEntry):
+async def test_duplicate_entry(connection: AioMySQLConnection) -> None:
+    with pytest.warns(ImplicitRollback):
+        async with Transaction(connection) as trx:
+            await trx.query("CREATE TEMPORARY TABLE `test` (`id` INT PRIMARY KEY, `name` VARCHAR(255))")
             await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")
+
+            with pytest.raises(DuplicateEntry):
+                await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")

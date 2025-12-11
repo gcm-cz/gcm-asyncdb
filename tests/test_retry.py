@@ -1,73 +1,32 @@
-import os
-from typing import Any, AsyncGenerator
+import warnings
+from contextlib import contextmanager
 
 import pytest
 from pymysql.constants import ER
 from tenacity import stop_after_attempt
 
-from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, QueryObserver, TransactionFactory
-from asyncdb.exceptions import Deadlock
+from asyncdb.aiomysql import TransactionFactory
+from asyncdb.exceptions import Deadlock, ImplicitRollback
 
-config = MySQLConfig(
-    host=os.getenv("TEST_MYSQL_HOST", "localhost"),
-    port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
-    user=os.getenv("TEST_MYSQL_USER", "root"),
-    password=os.getenv("TEST_MYSQL_PASSWORD", ""),
-    database=os.getenv("TEST_MYSQL_DATABASE", "test"),
-    max_pool_size=1,
-)
-
-
-class TestQueryObserver(QueryObserver):
-    def __init__(self):
-        super().__init__()
-        self.QUERIES_EXECUTED = []
-
-    def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs: Any) -> Any:
-        self.QUERIES_EXECUTED.append(query)
-
-    def clear(self):
-        self.QUERIES_EXECUTED.clear()
-
-
-@pytest.fixture(scope="function")
-def catch_queries() -> TestQueryObserver:
-    return TestQueryObserver()
-
-
-@pytest.fixture(scope="function")
-async def factory(catch_queries: TestQueryObserver) -> AsyncGenerator[TransactionFactory, None]:
-    factory = TransactionFactory(
-        config=config,
-        connection_observers=[catch_queries],
-    )
-    factory.ensure_pool(keeper_task=False)
-
-    await factory.pool._keeper_task_iteration()
-
-    yield factory
-
-    for pool in TransactionFactory._pool_cache.values():
-        await pool.close()
-
-    TransactionFactory._pool_cache.clear()
+from .conftest import CatchQueryObserver
 
 
 @pytest.mark.asyncio
-async def test_retry_reraises(factory: TransactionFactory, catch_queries: TestQueryObserver, caplog) -> None:
+async def test_retry_reraises(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
     catch_queries.clear()
     caplog.clear()
 
-    async with factory.transaction() as trx:
-        @trx.retry(retry_stop=stop_after_attempt(2))
-        async def retry_block() -> None:
-            await trx.query("SELECT 'a'")
-            raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
+    with pytest.warns(ImplicitRollback):
+        async with factory.transaction() as trx:
+            @trx.retry(retry_stop=stop_after_attempt(2))
+            async def retry_block() -> None:
+                await trx.query("SELECT 'a'")
+                raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
 
-        # Ensure the deadlock is re-raised after retries
-        with pytest.raises(Deadlock):
-            await retry_block()
-            await trx.commit()  # This line won't be called.
+            # Ensure the deadlock is re-raised after retries
+            with pytest.raises(Deadlock):
+                await retry_block()
+                await trx.commit()  # This line won't be called.
 
     # Ensure all the transaction queries were executed.
     assert catch_queries.QUERIES_EXECUTED[-6:] == [
@@ -94,7 +53,7 @@ async def test_retry_reraises(factory: TransactionFactory, catch_queries: TestQu
 
 
 @pytest.mark.asyncio
-async def test_retry_succeeds(factory: TransactionFactory, catch_queries: TestQueryObserver, caplog) -> None:
+async def test_retry_succeeds(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
     catch_queries.clear()
     caplog.clear()
 
@@ -110,7 +69,9 @@ async def test_retry_succeeds(factory: TransactionFactory, catch_queries: TestQu
                 raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
 
         # Ensure the block eventually succeeds.
-        await retry_block()
+        with pytest.warns(ImplicitRollback):
+            await retry_block()
+
         await trx.commit()
 
     # Ensure all the transaction queries were executed.
@@ -137,15 +98,16 @@ async def test_retry_succeeds(factory: TransactionFactory, catch_queries: TestQu
 
 
 @pytest.mark.asyncio
-async def test_retry_context_reraises(factory: TransactionFactory, catch_queries: TestQueryObserver, caplog) -> None:
+async def test_retry_context_reraises(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
     catch_queries.clear()
     caplog.clear()
 
-    with pytest.raises(Deadlock):
-        async for attempt in factory.retry(retry_stop=stop_after_attempt(3)):
-            async with attempt as trx:
-                await trx.query("SELECT 'a'")
-                raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
+    with pytest.warns(ImplicitRollback):
+        with pytest.raises(Deadlock):
+            async for attempt in factory.retry(retry_stop=stop_after_attempt(3)):
+                async with attempt as trx:
+                    await trx.query("SELECT 'a'")
+                    raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
 
     # Ensure all the transaction queries were executed.
     assert catch_queries.QUERIES_EXECUTED[-6:] == [
@@ -170,20 +132,21 @@ async def test_retry_context_reraises(factory: TransactionFactory, catch_queries
 
 
 @pytest.mark.asyncio
-async def test_retry_context_succeeds(factory: TransactionFactory, catch_queries: TestQueryObserver, caplog) -> None:
+async def test_retry_context_succeeds(factory: TransactionFactory, catch_queries: CatchQueryObserver, caplog: pytest.LogCaptureFixture) -> None:
     catch_queries.clear()
     caplog.clear()
 
     attempt_no = 0
-    async for attempt in factory.retry():
-        async with attempt as trx:
-            attempt_no += 1
-            await trx.query("SELECT 'a'")
-            if attempt_no < 3:
-                raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
+    with pytest.warns(ImplicitRollback):
+        async for attempt in factory.retry():
+            async with attempt as trx:
+                attempt_no += 1
+                await trx.query("SELECT 'a'")
+                if attempt_no < 3:
+                    raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
 
-            # Ensure the block eventually succeeds.
-            await trx.commit()
+                # Ensure the block eventually succeeds.
+                await trx.commit()
 
     # Ensure all the transaction queries were executed.
     assert catch_queries.QUERIES_EXECUTED[-9:] == [

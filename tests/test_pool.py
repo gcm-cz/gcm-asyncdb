@@ -3,28 +3,9 @@ import os
 from typing import Any
 
 import pytest
-import pytest_asyncio
 
 from asyncdb.aiomysql import MySQLConfig, MySQLConnectionPool, Transaction
-from asyncdb.exceptions import QueryError, LostConnection
-
-
-@pytest_asyncio.fixture
-async def pool():
-    pool = MySQLConnectionPool(
-        MySQLConfig(
-            host=os.getenv("TEST_MYSQL_HOST", "localhost"),
-            port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
-            user=os.getenv("TEST_MYSQL_USER", "root"),
-            password=os.getenv("TEST_MYSQL_PASSWORD", ""),
-            database=os.getenv("TEST_MYSQL_DATABASE", "test"),
-            max_spare_conns=5,
-            min_spare_conns=3,
-        ),
-        keeper_task=False,
-    )
-    yield pool
-    await pool.close()
+from asyncdb.exceptions import QueryError, LostConnection, ImplicitRollback
 
 
 def test_pool_init_errors():
@@ -36,7 +17,7 @@ def test_pool_init_errors():
 
 
 @pytest.mark.asyncio
-async def test_pool_counts_connections(pool):
+async def test_pool_counts_connections(pool: MySQLConnectionPool) -> None:
     assert pool.current_pool_size == 0
     await pool._keeper_task_iteration()
     assert pool.current_pool_size == 3
@@ -50,9 +31,14 @@ async def test_pool_counts_connections(pool):
     assert pool.current_pool_size == 3
     assert pool.current_pool_free == 3
 
+    await pool.close()
+
+    assert pool.current_pool_size == 0
+    assert pool.current_pool_free == 0
+
 
 @pytest.mark.asyncio
-async def test_pool_raises_connections(pool):
+async def test_pool_raises_connections(pool: MySQLConnectionPool) -> None:
     await pool._keeper_task_iteration()
 
     async with await pool.get_transaction() as trx:
@@ -67,9 +53,14 @@ async def test_pool_raises_connections(pool):
     assert pool.current_pool_size == 4
     assert pool.current_pool_free == 4
 
+    await pool.close()
+
+    assert pool.current_pool_size == 0
+    assert pool.current_pool_free == 0
+
 
 @pytest.mark.asyncio
-async def test_pool_dynamically_creates_connections(pool):
+async def test_pool_dynamically_creates_connections(pool: MySQLConnectionPool) -> None:
     assert pool.current_pool_size == 0
     assert pool.current_pool_free == 0
 
@@ -86,9 +77,14 @@ async def test_pool_dynamically_creates_connections(pool):
     assert pool.current_pool_size == 3
     assert pool.current_pool_free == 3
 
+    await pool.close()
+
+    assert pool.current_pool_size == 0
+    assert pool.current_pool_free == 0
+
 
 @pytest.mark.asyncio
-async def test_pool_depletion():
+async def test_pool_depletion() -> None:
     pool = MySQLConnectionPool(
         MySQLConfig(
             host=os.getenv("TEST_MYSQL_HOST", "localhost"),
@@ -146,9 +142,12 @@ async def test_pool_depletion():
 
     await pool.close()
 
+    assert pool.current_pool_size == 0
+    assert pool.current_pool_free == 0
+
 
 @pytest.mark.asyncio
-async def test_pool_discard_conns():
+async def test_pool_discard_conns() -> None:
     pool = MySQLConnectionPool(
         MySQLConfig(
             max_pool_size=1,
@@ -206,9 +205,12 @@ async def test_pool_discard_conns():
 
     await pool.close()
 
+    assert pool.current_pool_size == 0
+    assert pool.current_pool_free == 0
+
 
 @pytest.mark.asyncio
-async def test_remote_app():
+async def test_remote_app() -> None:
     pool = MySQLConnectionPool(
         MySQLConfig(
             host=os.getenv("TEST_MYSQL_HOST", "localhost"),
@@ -226,24 +228,27 @@ async def test_remote_app():
     # Pool has remote app
     assert pool.remote_app == "test-remote-app", "Pool remote app is missing."
 
-    async with await pool.get_transaction() as trx:
-        # Connection has remote app
-        assert trx.connection.remote_app == "test-remote-app", "Connection remote app is missing."
+    with pytest.warns(ImplicitRollback):
+        async with await pool.get_transaction() as trx:
+            # Connection has remote app
+            assert trx.connection.remote_app == "test-remote-app", "Connection remote app is missing."
 
-        # Transaction has remote app
-        assert trx.remote_app == "test-remote-app", "Transaction remote app is missing."
+            # Transaction has remote app
+            assert trx.remote_app == "test-remote-app", "Transaction remote app is missing."
 
-        try:
-            await trx.query("SELECT INVALID")
-        except QueryError as exc:
-            # Exception has remote app
-            assert exc.remote_app == "test-remote-app", "Exception remote app is missing."
+            with pytest.raises(QueryError):
+                try:
+                    await trx.query("SELECT INVALID")
+                except QueryError as exc:
+                    # Exception has remote app
+                    assert exc.remote_app == "test-remote-app", "Exception remote app is missing."
+                    raise
 
     await pool.close()
 
 
 @pytest.mark.asyncio
-async def test_pool_connect_error(caplog):
+async def test_pool_connect_error(caplog: pytest.LogCaptureFixture) -> None:
     pool = MySQLConnectionPool(MySQLConfig(max_pool_size=1, host="invalid-host"), keeper_task=False)
     await pool._keeper_task_iteration()
 
@@ -264,7 +269,7 @@ class FailingMySQLConnectionPool(MySQLConnectionPool):
 
 
 @pytest.mark.asyncio
-async def test_pool_transaction_error():
+async def test_pool_transaction_error() -> None:
     pool = FailingMySQLConnectionPool(
         MySQLConfig(
             host=os.getenv("TEST_MYSQL_HOST", "localhost"),
@@ -298,3 +303,8 @@ async def test_pool_transaction_error():
     assert pool.connections_in_use == 0
     assert pool.current_pool_free == 5
     assert pool.current_pool_size == 5
+
+    await pool.close()
+
+    assert pool.current_pool_size == 0
+    assert pool.current_pool_free == 0

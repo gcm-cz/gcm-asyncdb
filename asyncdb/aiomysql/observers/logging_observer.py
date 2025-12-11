@@ -9,7 +9,7 @@ from tenacity import RetryCallState
 from asyncdb._sl import _SL
 from asyncdb.aiomysql.observer import QueryObserver, TransactionObserver
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from asyncdb.aiomysql.connection import AioMySQLConnection
     from asyncdb.aiomysql.transaction import Transaction
 

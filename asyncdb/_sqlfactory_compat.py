@@ -7,8 +7,7 @@ from typing import Any
 try:
     from sqlfactory.execute import ExecutableStatement
 except ImportError:
-
-    class ExecutableStatement:  # type: ignore[no-redef]
+    class ExecutableStatement:  # type: ignore[no-redef]  # pragma: no cover
         """
         Dummy ExecutableStatement stub for compatibility when sqlfactory is not installed.
         """

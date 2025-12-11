@@ -1,66 +1,20 @@
 import os
 import warnings
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import pytest
-from sqlfactory import Select, SelectColumn, Value, Aliased, UnionAll
+from sqlfactory import Select, Value, Aliased, UnionAll
 
 from asyncdb import ResultRow
-from asyncdb.aiomysql import MySQLConfig, AioMySQLConnection, QueryObserver, Transaction, result
-from asyncdb.exceptions import ImplicitRollback, LogicError, ParseError
+from asyncdb.aiomysql import AioMySQLConnection, Transaction
+from asyncdb.exceptions import ImplicitRollback, LogicError
 
-config = MySQLConfig(
-    host=os.getenv("TEST_MYSQL_HOST", "localhost"),
-    port=int(os.getenv("TEST_MYSQL_PORT", "3306")),
-    user=os.getenv("TEST_MYSQL_USER", "root"),
-    password=os.getenv("TEST_MYSQL_PASSWORD", ""),
-    database=os.getenv("TEST_MYSQL_DATABASE", "test"),
-    max_pool_size=1,
-)
-
-
-class TestQueryObserver(QueryObserver):
-    def __init__(self):
-        super().__init__()
-        self.QUERIES_EXECUTED = []
-
-    def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs: Any) -> Any:
-        self.QUERIES_EXECUTED.append(query)
-
-    def clear(self):
-        self.QUERIES_EXECUTED.clear()
-
-
-@pytest.fixture(scope="function")
-def catch_queries() -> TestQueryObserver:
-    return TestQueryObserver()
-
-
-@pytest.fixture(scope="function")
-async def connection(catch_queries) -> AsyncGenerator[AioMySQLConnection, None]:
-    conn = AioMySQLConnection(
-        host=config.host,
-        port=config.port,
-        user=config.user,
-        password=config.password,
-        db=config.database,
-    )
-    conn.attach(catch_queries)
-
-    yield conn
-
-    await conn.ensure_closed()
-
-
-@pytest.fixture(scope="function")
-async def transaction(connection: AioMySQLConnection) -> AsyncGenerator[Transaction, None]:
-    async with Transaction(connection) as trx:
-        yield trx
+from .conftest import CatchQueryObserver
 
 
 @pytest.mark.asyncio
-async def test_simple_query(transaction: Transaction, catch_queries: TestQueryObserver) -> None:
+async def test_simple_query(transaction: Transaction, catch_queries: CatchQueryObserver) -> None:
     catch_queries.clear()
     q = await transaction.query(Select(Aliased(Value(1), alias="result")))
     async for row in q.fetch_all_dict():
@@ -72,14 +26,15 @@ async def test_simple_query(transaction: Transaction, catch_queries: TestQueryOb
 
 
 @pytest.mark.asyncio
-async def test_rollback_when_exception(connection: AioMySQLConnection, catch_queries: TestQueryObserver) -> None:
-    async with Transaction(connection) as transaction:
-        with pytest.raises(TypeError):
-            with pytest.warns(ImplicitRollback):
-                catch_queries.clear()
-                one = await transaction.get_scalar(Select(Value(1)))
-                print(one / None)
-                await transaction.commit()
+async def test_rollback_when_exception(connection: AioMySQLConnection, catch_queries: CatchQueryObserver) -> None:
+    with pytest.warns(ImplicitRollback):
+        async with Transaction(connection) as transaction:
+            with pytest.raises(TypeError):
+                with pytest.warns(ImplicitRollback):
+                    catch_queries.clear()
+                    one = await transaction.get_scalar(Select(Value(1)))
+                    print(one / None)
+                    await transaction.commit()
 
     assert "SELECT 1" in catch_queries.QUERIES_EXECUTED
     assert "ROLLBACK" in catch_queries.QUERIES_EXECUTED
@@ -87,7 +42,7 @@ async def test_rollback_when_exception(connection: AioMySQLConnection, catch_que
 
 
 @pytest.mark.asyncio
-async def test_get(transaction: Transaction, caplog) -> None:
+async def test_get(transaction: Transaction, caplog: pytest.LogCaptureFixture) -> None:
     assert await transaction.get_scalar(Select(Value(1))) == 1
     assert await transaction.get_list(Select(Value(1))) == [1]
     assert await transaction.get_dict(Select(Value(1))) == {"1": 1}
@@ -112,7 +67,7 @@ async def test_operation_after_commit(connection: AioMySQLConnection) -> None:
 
 
 @pytest.mark.asyncio
-async def test_errors(connection: AioMySQLConnection, caplog) -> None:
+async def test_errors(connection: AioMySQLConnection, caplog: pytest.LogCaptureFixture) -> None:
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             q = await transaction.query(Select(Value(1)))

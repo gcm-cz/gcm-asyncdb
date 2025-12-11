@@ -5,6 +5,7 @@ from enum import Enum
 from functools import wraps
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, Self, Type, cast, overload
+from warnings import warn
 
 from tenacity import RetryCallState, retry, retry_any
 from tenacity.retry import RetryBaseT
@@ -15,7 +16,7 @@ from typing_extensions import deprecated
 from .._sl import _SL
 from .._sqlfactory_compat import ExecutableStatement
 from ..asyncdb import Transaction as AsyncTransactionBase
-from ..exceptions import LogicError
+from ..exceptions import LogicError, ImplicitRollback
 from ..generics import ArgsT
 from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
 from .cursor import Cursor
@@ -255,7 +256,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         with _SL():
             await self.cleanup()
 
-            if not self.is_committed():
+            if not await self.is_committed():
+                warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get() + 2)
                 await self.rollback()
 
             self._transaction_initiated = False
@@ -725,6 +727,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         # Stacklevel 4 is for Tenacity's internals (3) + retry decorator (1).
         with _SL(4):
             if not await self.is_committed():
+                warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get())
                 await self.rollback()
 
             with _SL(2):

@@ -2,26 +2,11 @@ from typing import Any
 
 import pytest
 
-from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, TransactionObserver
-from asyncdb.exceptions import ParseError
-
-from .test_connection import config
+from asyncdb.aiomysql import AioMySQLConnection, QueryObserver, Transaction, TransactionFactory, TransactionObserver, MySQLConfig
+from asyncdb.exceptions import ParseError, ImplicitRollback
 
 
-@pytest.fixture(scope="function")
-async def connection():
-    conn = AioMySQLConnection(
-        host=config.host,
-        port=config.port,
-        user=config.user,
-        password=config.password,
-        db=config.database,
-    )
-    yield conn
-    await conn.ensure_closed()
-
-
-class TestQueryObserver(QueryObserver):
+class QueryObserverForTest(QueryObserver):
     def __init__(self) -> None:
         super().__init__()
         self.before: bool = False
@@ -45,7 +30,7 @@ class TestQueryObserver(QueryObserver):
         self.error = False
 
 
-class TestTransactionObserver(TransactionObserver):
+class TransactionObserverForTest(TransactionObserver):
     def __init__(self) -> None:
         super().__init__()
         self.start: bool = False
@@ -92,8 +77,8 @@ class TestTransactionObserver(TransactionObserver):
 
 
 @pytest.mark.asyncio
-async def test_query_observer(connection):
-    observer = TestQueryObserver()
+async def test_query_observer(connection: AioMySQLConnection) -> None:
+    observer = QueryObserverForTest()
     connection.attach(observer)
 
     async with Transaction(connection) as trx:
@@ -123,11 +108,13 @@ async def test_query_observer(connection):
         assert observer.after is False
         assert observer.error is True
 
+        await trx.commit()
+
 
 @pytest.mark.asyncio
-async def test_query_observer_from_factory():
+async def test_query_observer_from_factory(config: MySQLConfig) -> None:
     try:
-        observer = TestQueryObserver()
+        observer = QueryObserverForTest()
 
         factory = TransactionFactory(
             config=config,
@@ -150,6 +137,8 @@ async def test_query_observer_from_factory():
             assert observer.before is True
             assert observer.after is False
             assert observer.error is True
+
+            await trx.commit()
     finally:
         for pool in TransactionFactory._pool_cache.values():
             await pool.close()
@@ -157,66 +146,11 @@ async def test_query_observer_from_factory():
 
 
 @pytest.mark.asyncio
-async def test_transaction_observer(connection):
-    observer = TestTransactionObserver()
+async def test_transaction_observer(connection: AioMySQLConnection) -> None:
+    observer = TransactionObserverForTest()
 
-    async with Transaction(connection, observers=[observer]) as trx:
-        res = await trx.query("SELECT 1")
-        await res.close()
-
-        assert observer.start is True
-        assert observer.end is False
-        assert observer.commit is False
-        assert observer.rollback is False
-        assert observer.before is True
-        assert observer.after is True
-        assert observer.error is False
-
-        observer.reset()
-
-        with pytest.raises(ParseError):
-            await trx.query("PARSE ERROR")
-
-        assert observer.start is False
-        assert observer.end is False
-        assert observer.commit is False
-        assert observer.rollback is False
-        assert observer.before is True
-        assert observer.after is False
-        assert observer.error is True
-
-    assert observer.end is True
-    assert observer.commit is False
-    assert observer.rollback is True
-
-    observer.reset()
-
-    async with Transaction(connection, observers=[observer]) as trx:
-        res = await trx.query("SELECT 1")
-        await res.close()
-
-        await trx.commit()
-
-    assert observer.start is True
-    assert observer.end is True
-    assert observer.commit is True
-    assert observer.rollback is False
-    assert observer.before is True
-    assert observer.after is True
-    assert observer.error is False
-
-
-@pytest.mark.asyncio
-async def test_transaction_observer_factory():
-    observer = TestTransactionObserver()
-
-    try:
-        factory = TransactionFactory(
-            config=config,
-            transaction_observers=[observer]
-        )
-
-        async with factory.transaction() as trx:
+    with pytest.warns(ImplicitRollback):
+        async with Transaction(connection, observers=[observer]) as trx:
             res = await trx.query("SELECT 1")
             await res.close()
 
@@ -240,6 +174,63 @@ async def test_transaction_observer_factory():
             assert observer.before is True
             assert observer.after is False
             assert observer.error is True
+
+    assert observer.end is True
+    assert observer.commit is False
+    assert observer.rollback is True
+
+    observer.reset()
+
+    async with Transaction(connection, observers=[observer]) as trx:
+        res = await trx.query("SELECT 1")
+        await res.close()
+
+        await trx.commit()
+
+    assert observer.start is True
+    assert observer.end is True
+    assert observer.commit is True
+    assert observer.rollback is False
+    assert observer.before is True
+    assert observer.after is True
+    assert observer.error is False
+
+
+@pytest.mark.asyncio
+async def test_transaction_observer_factory(config: MySQLConfig) -> None:
+    observer = TransactionObserverForTest()
+
+    try:
+        factory = TransactionFactory(
+            config=config,
+            transaction_observers=[observer]
+        )
+
+        with pytest.warns(ImplicitRollback):
+            async with factory.transaction() as trx:
+                res = await trx.query("SELECT 1")
+                await res.close()
+
+                assert observer.start is True
+                assert observer.end is False
+                assert observer.commit is False
+                assert observer.rollback is False
+                assert observer.before is True
+                assert observer.after is True
+                assert observer.error is False
+
+                observer.reset()
+
+                with pytest.raises(ParseError):
+                    await trx.query("PARSE ERROR")
+
+                assert observer.start is False
+                assert observer.end is False
+                assert observer.commit is False
+                assert observer.rollback is False
+                assert observer.before is True
+                assert observer.after is False
+                assert observer.error is True
 
         assert observer.end is True
         assert observer.commit is False

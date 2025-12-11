@@ -159,7 +159,10 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         :param conn: Connection to close.
         """
         self.log.debug("Closing connection %r.", conn)
-        await conn.ensure_closed()
+        try:
+            await conn.ensure_closed()
+        except Exception as exc:
+            self.log.exception("Error while closing connection %r: %r", conn, exc)
 
     async def get_transaction(  # type: ignore[override]
         self,

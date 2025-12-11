@@ -238,11 +238,8 @@ class ObserverContext:
         try:
             if self.token:
                 self.__class__.ctx.reset(self.token)
-        except ValueError as exc:
-            if exc_val:
-                raise BaseExceptionGroup("Observer failed.", [exc, exc_val])  # pylint: disable=raise-missing-from  # noqa: B904
-
-            raise
+        except ValueError:
+            pass
 
     def kwargs(self, **kwargs: Any) -> dict[str, Any]:
         """Combine keyword arguments from the context and the method call."""
