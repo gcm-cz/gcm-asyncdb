@@ -4,15 +4,13 @@ Database-related exceptions.
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class Error(Exception):
     """
     Base error class for database exceptions.
     """
 
-    def __init__(self, message: str, code: Optional[int] = None, remote_app: str = "") -> None:
+    def __init__(self, message: str, code: int | None = None, remote_app: str = "") -> None:
         """
         :param message: Error message
         :param code: Optional error code (MySQL often returns error codes for its errors).
@@ -35,7 +33,7 @@ class QueryError(Error):
     Errors based on query execution.
     """
 
-    def __init__(self, query: str, message: str, code: Optional[int] = None, remote_app: str = "") -> None:
+    def __init__(self, query: str, message: str, code: int | None = None, remote_app: str = "") -> None:
         """
         :param query: Query that caused the error.
         :param message: Error message describing the error.
@@ -70,7 +68,7 @@ class EntityNotFound(LogicError):
     Requested entity was not found.
     """
 
-    def __init__(self, query: str, message: str = "Entity not found.", code: Optional[int] = None, remote_app: str = "") -> None:
+    def __init__(self, query: str, message: str = "Entity not found.", code: int | None = None, remote_app: str = "") -> None:
         """
         :param query: Query that caused the error.
         :param message: Error message describing the error.
@@ -85,7 +83,7 @@ class DuplicateEntry(IntegrityError):
     Duplicate entry exception.
     """
 
-    def __init__(self, query: str, message: str = "Duplicate entry.", code: Optional[int] = None, remote_app: str = "") -> None:
+    def __init__(self, query: str, message: str = "Duplicate entry.", code: int | None = None, remote_app: str = "") -> None:
         """
         :param query: Query that caused the error.
         :param message: Error message describing the error.

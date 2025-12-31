@@ -2,13 +2,14 @@
 Thread pool with support of passing asyncio context to the threads.
 """
 
+from collections.abc import Callable
 from concurrent.futures import Future
 from concurrent.futures.thread import ThreadPoolExecutor
 
 # noinspection PyPackageRequirements
 from contextvars import copy_context
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 
 
 class ContextAwareThreadPoolExecutor(ThreadPoolExecutor):

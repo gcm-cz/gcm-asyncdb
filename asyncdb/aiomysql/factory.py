@@ -1,7 +1,7 @@
 import asyncio
-from collections.abc import Collection
+from collections.abc import AsyncGenerator, AsyncIterator, Collection
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
-from typing import AsyncGenerator, AsyncIterator, ClassVar, Optional, Type, cast
+from typing import ClassVar, cast
 
 from tenacity import AsyncRetrying, AttemptManager, RetryCallState, retry_any
 from tenacity.retry import RetryBaseT
@@ -108,14 +108,14 @@ class TransactionFactory:
     def __init__(
         self,
         config: MySQLConfigProtocol,
-        isolation_level: Optional[TransactionIsolationLevel] = None,
-        connection_class: Type[AioMySQLConnection] = AioMySQLConnection,
-        connection_observers: Optional[Collection[QueryObserver]] = None,
-        transaction_observers: Optional[Collection[TransactionObserver]] = None,
+        isolation_level: TransactionIsolationLevel | None = None,
+        connection_class: type[AioMySQLConnection] = AioMySQLConnection,
+        connection_observers: Collection[QueryObserver] | None = None,
+        transaction_observers: Collection[TransactionObserver] | None = None,
         *,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
     ) -> None:
         # pylint: disable=too-many-arguments
         """
@@ -212,12 +212,12 @@ class TransactionFactory:
 
     def transaction(
         self,
-        isolation_level: Optional[TransactionIsolationLevel] = None,
-        timeout: Optional[float] = None,
+        isolation_level: TransactionIsolationLevel | None = None,
+        timeout: float | None = None,
         *,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
     ) -> TransactionContext[Transaction]:
         """
         Returns transaction with optionally specifying isolation level and / or timeout for the connection.
@@ -259,12 +259,12 @@ class TransactionFactory:
 
     async def retry(
         self,
-        isolation_level: Optional[TransactionIsolationLevel] = None,
-        timeout: Optional[float] = None,  # noqa: ASYNC109
+        isolation_level: TransactionIsolationLevel | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109
         *,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
     ) -> AsyncGenerator[_AsyncGeneratorContextManager[Transaction], None]:
         """
         Generator version of the Transaction's deadlock retry decorator. The difference is, that decorator uses the same

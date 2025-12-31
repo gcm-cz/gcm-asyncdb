@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Optional, Type, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from aiomysql.connection import MySQLResult
 
@@ -110,7 +110,7 @@ class Result(AsyncResultBase):
 
         return True
 
-    async def _fetch_raw(self) -> Optional[Any]:
+    async def _fetch_raw(self) -> Any | None:
         row = await self._fetchone()
         if not row and await self._nextset():
             row = await self._fetchone()
@@ -146,7 +146,7 @@ class Result(AsyncResultBase):
         self._rownumber = r
 
     @overload
-    async def fetch_list(self, /) -> Optional[list[Any]]:
+    async def fetch_list(self, /) -> list[Any] | None:
         """
         Fetch one row from result as `list` (indexed column access).
 
@@ -174,7 +174,7 @@ class Result(AsyncResultBase):
         """
 
     @overload
-    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]:
+    async def fetch_list(self, cls: type[ListT], /, *args: Any, **kwargs: Any) -> ListT | None:
         """
         Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument.
 
@@ -207,7 +207,7 @@ class Result(AsyncResultBase):
         :return: Instance of cls created from result row or None if no rows are remaining in the result set.
         """
 
-    async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
+    async def fetch_list(self, cls: type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> ListT | list[Any] | None:
         """
         Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument,
         defaults to `list`.
@@ -247,7 +247,7 @@ class Result(AsyncResultBase):
         return result
 
     @overload
-    async def fetch_dict(self, /) -> Optional[dict[str, Any]]:
+    async def fetch_dict(self, /) -> dict[str, Any] | None:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
 
@@ -275,7 +275,7 @@ class Result(AsyncResultBase):
         """
 
     @overload
-    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> Optional[DictT]:
+    async def fetch_dict(self, cls: type[DictT], /, *args: Any, **kwargs: Any) -> DictT | None:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
 
@@ -311,8 +311,8 @@ class Result(AsyncResultBase):
         """
 
     async def fetch_dict(
-        self, cls: Type[DictT | dict[str, Any]] = dict, /, *args: Any, **kwargs: Any
-    ) -> Optional[DictT | dict[str, Any]]:
+        self, cls: type[DictT | dict[str, Any]] = dict, /, *args: Any, **kwargs: Any
+    ) -> DictT | dict[str, Any] | None:
         """
         Fetch one row from result as dictionary (mapping). The dictionary type can be specified as the cls argument. Defaults
         to `dict`.
@@ -353,7 +353,7 @@ class Result(AsyncResultBase):
         return result
 
     @overload
-    async def fetch_object(self, /) -> Optional[ResultRow]:
+    async def fetch_object(self, /) -> ResultRow | None:
         """
         Fetch one row from result as object of type ResultRow.
 
@@ -383,7 +383,7 @@ class Result(AsyncResultBase):
         """
 
     @overload
-    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = True, **kwargs: Any) -> Optional[OBJ]:
+    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = True, **kwargs: Any) -> OBJ | None:
         """
         Fetch one row from result as object of type specified by the cls argument.
 
@@ -423,8 +423,8 @@ class Result(AsyncResultBase):
         """
 
     async def fetch_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = True, **kwargs: Any
-    ) -> Optional[OBJ | ResultRow]:
+        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = True, **kwargs: Any
+    ) -> OBJ | ResultRow | None:
         """
         Fetch one row from result as object of type specified by the cls argument. Defaults to generic `ResultRow` object.
 
@@ -504,7 +504,7 @@ class Result(AsyncResultBase):
         """
 
     @overload
-    async def fetch_all_scalar(self, factory: Type[SetT]) -> SetT:  # pylint: disable=arguments-differ
+    async def fetch_all_scalar(self, factory: type[SetT]) -> SetT:  # pylint: disable=arguments-differ
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
 
@@ -528,7 +528,7 @@ class Result(AsyncResultBase):
         """
 
     @overload
-    async def fetch_all_scalar(self, factory: Type[ListT]) -> ListT:  # pylint: disable=arguments-differ
+    async def fetch_all_scalar(self, factory: type[ListT]) -> ListT:  # pylint: disable=arguments-differ
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
 
@@ -556,7 +556,7 @@ class Result(AsyncResultBase):
         :param factory: Factory to use for the output type.
         """
 
-    async def fetch_all_scalar(self, factory: Type[ListT | SetT | list[Any]] = list) -> ListT | SetT | list[Any]:
+    async def fetch_all_scalar(self, factory: type[ListT | SetT | list[Any]] = list) -> ListT | SetT | list[Any]:
         """
         Fetch all rows from the result set as scalars.
 

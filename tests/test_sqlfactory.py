@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from sqlfactory import Select, Value, Aliased, UnionAll
+from sqlfactory import Aliased, Select, UnionAll, Value
 
 from asyncdb import ResultRow
 from asyncdb.aiomysql import AioMySQLConnection, Transaction
@@ -30,11 +30,9 @@ async def test_rollback_when_exception(connection: AioMySQLConnection, catch_que
     with pytest.warns(ImplicitRollback):
         async with Transaction(connection) as transaction:
             with pytest.raises(TypeError):
-                with pytest.warns(ImplicitRollback):
-                    catch_queries.clear()
-                    one = await transaction.get_scalar(Select(Value(1)))
-                    print(one / None)
-                    await transaction.commit()
+                catch_queries.clear()
+                await transaction.get_scalar(Select(Value(1)))
+                raise TypeError("Simulated error after query")
 
     assert "SELECT 1" in catch_queries.QUERIES_EXECUTED
     assert "ROLLBACK" in catch_queries.QUERIES_EXECUTED

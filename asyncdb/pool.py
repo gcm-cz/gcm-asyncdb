@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import CancelledError, Queue, QueueEmpty, Task
-from collections.abc import Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from time import time
@@ -14,14 +14,9 @@ from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
     ClassVar,
     Generic,
-    Optional,
     Self,
-    Type,
     TypeVar,
     cast,
     overload,
@@ -58,7 +53,7 @@ class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
 
         self.used: int = 0
         self.created: float = time()
-        self.current_transaction: Optional[Transaction[ConnectionTypeT]] = None
+        self.current_transaction: Transaction[ConnectionTypeT] | None = None
 
     def close(self) -> None | Awaitable[None]:
         """
@@ -86,7 +81,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
     Helper class that is injected to each transaction to return transaction to the pool when not used anymore.
     """
 
-    def __init__(self, *args: Any, pool: "ConnectionPool[ConnectionTypeT]", **kwargs: Any) -> None:
+    def __init__(self, *args: Any, pool: ConnectionPool[ConnectionTypeT], **kwargs: Any) -> None:
         """
         :param connection: Connection for this transaction
         :param pool: Connection pool this transaction has been spinned from
@@ -108,7 +103,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             raise
 
     async def __aexit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
     ) -> None:
         """
         Return connection to the pool when the transaction's context is left.
@@ -183,8 +178,8 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             self,
             result_fetcher: Callable[..., Callable[..., Awaitable[Any]]],
             query: str,
-            args: Optional[Iterable[Any]],
-            cls: Type[T] | Callable[..., T],
+            args: Iterable[Any] | None,
+            cls: type[T] | Callable[..., T],
             *cls_args: Any,
             **cls_kwargs: Any,
         ) -> T:
@@ -192,18 +187,18 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             ...
 
         @overload
-        async def get_object(self, query: str, args: Optional[Iterable[Any]] = None, /) -> ResultRow: ...
+        async def get_object(self, query: str, args: Iterable[Any] | None = None, /) -> ResultRow: ...
 
         @overload
         async def get_object(
-            self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
+            self, query: str, args: Iterable[Any] | None = None, cls: type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
         ) -> OBJ: ...
 
         @overload
         async def get_object(
             self,
             query: str,
-            args: Optional[Iterable[Any]] = None,
+            args: Iterable[Any] | None = None,
             cls: Callable[..., OBJ] = ...,
             /,
             *cls_args: Any,
@@ -213,8 +208,8 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         async def get_object(
             self,
             query: str,
-            args: Optional[Iterable[Any]] = None,
-            cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow,
+            args: Iterable[Any] | None = None,
+            cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow,
             /,
             *cls_args: Any,
             **cls_kwargs: Any,
@@ -236,18 +231,18 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             ...
 
         @overload
-        async def get_dict(self, query: str, args: Optional[Iterable[Any]] = None, /) -> dict[str, Any]: ...
+        async def get_dict(self, query: str, args: Iterable[Any] | None = None, /) -> dict[str, Any]: ...
 
         @overload
         async def get_dict(
-            self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+            self, query: str, args: Iterable[Any] | None = None, cls: type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
         ) -> DictT: ...
 
         async def get_dict(
             self,
             query: str,
-            args: Optional[Iterable[Any]] = None,
-            cls: Type[DictT | dict[str, Any]] = dict,
+            args: Iterable[Any] | None = None,
+            cls: type[DictT | dict[str, Any]] = dict,
             /,
             *cls_args: Any,
             **cls_kwargs: Any,
@@ -269,18 +264,18 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             ...
 
         @overload
-        async def get_list(self, query: str, args: Optional[Iterable[Any]] = None, /) -> list[Any]: ...
+        async def get_list(self, query: str, args: Iterable[Any] | None = None, /) -> list[Any]: ...
 
         @overload
         async def get_list(
-            self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+            self, query: str, args: Iterable[Any] | None = None, cls: type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
         ) -> ListT: ...
 
         async def get_list(
             self,
             query: str,
-            args: Optional[Iterable[Any]] = None,
-            cls: Type[ListT | list[Any]] = list,
+            args: Iterable[Any] | None = None,
+            cls: type[ListT | list[Any]] = list,
             /,
             *cls_args: Any,
             **cls_kwargs: Any,
@@ -301,7 +296,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
             """
             ...
 
-        async def get_scalar(self, query: str, args: Optional[Iterable[Any]] = None) -> Any:
+        async def get_scalar(self, query: str, args: Iterable[Any] | None = None) -> Any:
             # pylint: disable=unused-argument, unnecessary-ellipsis, no-self-use
             """
             Retrieve single value from the database. The query must return exactly one row and that
@@ -337,9 +332,9 @@ class PoolMetrics:
     Metrics for the connection pool.
     """
 
-    idle_connections: Optional[Gauge] = None
-    used_connections: Optional[Gauge] = None
-    connection_limit: Optional[Gauge] = None
+    idle_connections: Gauge | None = None
+    used_connections: Gauge | None = None
+    connection_limit: Gauge | None = None
 
 
 class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-instance-attributes
@@ -350,13 +345,13 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
     def __init__(
         self,
-        connection_class: Type[ConnectionTypeT],
+        connection_class: type[ConnectionTypeT],
         *args: Any,
         max_pool_size: int = 100,
         max_spare_conns: int = 10,
         min_spare_conns: int = 5,
-        max_conn_lifetime: Optional[int] = 300,
-        max_conn_usage: Optional[int] = 100,
+        max_conn_lifetime: int | None = 300,
+        max_conn_usage: int | None = 100,
         keeper_task: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -418,7 +413,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
         self._connections_in_use = 0
 
-        self._keeper_task_done: Optional[Task[None]] = None
+        self._keeper_task_done: Task[None] | None = None
         if keeper_task:
             self._start_keeper_task()
 
@@ -443,9 +438,9 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
     def set_metrics(
         self,
         *,
-        idle_connections: Optional[Gauge] = None,
-        used_connections: Optional[Gauge] = None,
-        connection_limit: Optional[Gauge] = None,
+        idle_connections: Gauge | None = None,
+        used_connections: Gauge | None = None,
+        connection_limit: Gauge | None = None,
     ) -> None:
         """
         Set metrics to be observed. Metrics are updated on each worker thread run.
@@ -774,7 +769,7 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
 
         return cls._pool_cache[key]
 
-    def __init__(self, transaction_class: Type[TransactionTypeT], *args: Any, **kwargs: Any) -> None:
+    def __init__(self, transaction_class: type[TransactionTypeT], *args: Any, **kwargs: Any) -> None:
         """
         :param transaction_class: Class that is returned when transaction is requested.
         :param args: Arguments to the super class constructor.
@@ -788,7 +783,7 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         self,
         *args: Any,
         stacklevel: int = 1,
-        timeout: Optional[float] = None,  # noqa: ASYNC109
+        timeout: float | None = None,  # noqa: ASYNC109
         **kwargs: Any,
     ) -> TransactionTypeT:
         """
@@ -818,16 +813,16 @@ class ConnectionPoolSingleton(Generic[T]):
     Just a basic singleton for connection pool.
     """
 
-    def __init__(self, cls: Type[T], *args: Any, **kwargs: Any):
+    def __init__(self, cls: type[T], *args: Any, **kwargs: Any):
         """
         :param cls: Connection pool class
         :param args: Arguments to the connection pool constructor.
         :param kwargs: Keyword arguments to the connection pool constructor.
         """
-        self.cls: Type[T] = cls
+        self.cls: type[T] = cls
         self.args = args
         self.kwargs = kwargs
-        self._instance: Optional[T] = None
+        self._instance: T | None = None
 
     def instance(self) -> T:
         """

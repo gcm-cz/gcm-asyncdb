@@ -40,13 +40,13 @@ sqlfactory = { version = "^1.17.1", extras = ["sqlfactory"] }
 opentelemetry-api = { version = "^1.39.1" }
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7"
-pytest-asyncio = "^0"
-pylint = "^3"
+pytest = "^9"
+pytest-asyncio = "^1.3.0"
+pylint = "^4"
 mypy = "^1"
 ruff = "^0"
-pdoc = "^15.0.1"
-pytest-cov = "^6.0.0"
+pdoc = "^16.0.0"
+pytest-cov = "^7"
 pytest-mypy-plugins = "^3.2.0"
 python-dateutil = "^2.9.0.post0"
 
@@ -100,6 +100,7 @@ line-length = 130
 [tool.ruff.lint]
 # see https://docs.astral.sh/ruff/rules/ for more information about what checks each option adds
 select = [
+    "UP",
     "F", # pyflakes
     "E", # pycodestyle (former pep8) error
     "W", # pycodestyle (former pep8) warning

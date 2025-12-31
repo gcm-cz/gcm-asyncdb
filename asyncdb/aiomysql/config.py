@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from datetime import timezone, tzinfo
-from typing import Optional, Protocol
+from datetime import UTC, tzinfo
+from typing import Protocol
 
 from tenacity import retry_if_exception_type, stop_after_delay, wait_exponential
 from tenacity.retry import RetryBaseT
@@ -49,19 +49,19 @@ class MySQLConfigProtocol(Protocol):
     min_spare_conns: int
     """ Minimum spare connections to keep in the pool ready to use. Up to `max_pool_size` connections can be created. """
 
-    max_conn_lifetime: Optional[int]
+    max_conn_lifetime: int | None
     """
     Maximum lifetime of a connection in seconds. After this time, the connection is discarded and potentially replaced with new
     one when needed.
     """
 
-    max_conn_usage: Optional[int]
+    max_conn_usage: int | None
     """
     Maximum number of transactions this connection can handle. After exceeding the usage count, the connection is discarded
     and potentially replaced with new one when needed.
     """
 
-    connect_timeout: Optional[int] = None
+    connect_timeout: int | None = None
     """
     Timeout (in seconds) for the connection to be established. If the connection is not established in this time, the
     connection is considered failed and new attempt will be made.
@@ -70,31 +70,31 @@ class MySQLConfigProtocol(Protocol):
     in the transaction call.
     """
 
-    read_timeout: Optional[int] = None
+    read_timeout: int | None = None
     """
     Timeout (in seconds) for the query to be executed. If the query is not completed within this time frame, TimeoutError
     is raised.
     """
 
-    write_timeout: Optional[int] = None
+    write_timeout: int | None = None
     """
     Timeout (in seconds) for the query to be transfered from client to server. When the transfer time is longer, the query
     is failed and connection closed from the side of MySQL server.
     """
 
-    wait_timeout: Optional[int] = None
+    wait_timeout: int | None = None
     """
     Timeout (in seconds) for the connection to be idle before it is closed by the server.
     """
 
-    remote_app: Optional[str] = None
+    remote_app: str | None = None
     """
     Name of the connection to the database. This is used for logging purposes to distinguish between different connections.
 
     `remote_app` is propagated to exceptions.
     """
 
-    timezone: Optional[tzinfo] = timezone.utc
+    timezone: tzinfo | None = UTC
     """
     Timezone to use for the connection. When specified, the database will expect all datetime values to be in this timezone
     and will return all datetime values in this timezone as timezone-aware datetimes.
@@ -120,14 +120,14 @@ class MySQLConfig(MySQLConfigProtocol):  # pylint: disable=too-many-instance-att
     max_pool_size: int = 100
     max_spare_conns: int = 10
     min_spare_conns: int = 5
-    max_conn_lifetime: Optional[int] = 300
-    max_conn_usage: Optional[int] = 100
-    connect_timeout: Optional[int] = 1
-    read_timeout: Optional[int] = 60
-    write_timeout: Optional[int] = 60
-    wait_timeout: Optional[int] = None
-    remote_app: Optional[str] = None
-    timezone: Optional[tzinfo] = timezone.utc
+    max_conn_lifetime: int | None = 300
+    max_conn_usage: int | None = 100
+    connect_timeout: int | None = 1
+    read_timeout: int | None = 60
+    write_timeout: int | None = 60
+    wait_timeout: int | None = None
+    remote_app: str | None = None
+    timezone: tzinfo | None = UTC
 
 
 DEFAULT_RETRY: RetryBaseT = retry_if_exception_type(Deadlock)

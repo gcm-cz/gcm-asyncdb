@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Collection
 from contextvars import ContextVar, Token
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from tenacity import RetryCallState
 
@@ -274,13 +274,11 @@ class ObserverContext:
     Context object for storing observer state.
     """
 
-    ctx: ClassVar[ContextVar[Optional[dict[str, Any]]]] = ContextVar[Optional[dict[str, Any]]](
-        "ObserverContext.ctx", default=None
-    )
+    ctx: ClassVar[ContextVar[dict[str, Any] | None]] = ContextVar("ObserverContext.ctx", default=None)
 
     def __init__(self, **kwargs: Any):
         self._kwargs = kwargs
-        self.token: Optional[Token[dict[str, Any] | None]] = None
+        self.token: Token[dict[str, Any] | None] | None = None
 
     def __enter__(self) -> Self:
         existing_kwargs = self.__class__.ctx.get()
@@ -290,9 +288,7 @@ class ObserverContext:
         self.token = self.__class__.ctx.set({**existing_kwargs, **self._kwargs})
         return self
 
-    def __exit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
-    ) -> None:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
         try:
             if self.token:
                 self.__class__.ctx.reset(self.token)
@@ -311,9 +307,7 @@ class ObserverContext:
 class _QueryObserverContext(ObserverContext):
     """Context object for storing query observer state during query execution."""
 
-    query_ctx: ClassVar[ContextVar[Optional["_QueryObserverContext"]]] = ContextVar[Optional["_QueryObserverContext"]](
-        "_QueryObserverContext.ctx", default=None
-    )
+    query_ctx: ClassVar[ContextVar[_QueryObserverContext | None]] = ContextVar("_QueryObserverContext.ctx", default=None)
 
     def __init__(
         self, conn: AioMySQLConnection, query_pattern: str | None = None, query_args: Collection[Any] | None = None, **kwargs: Any
@@ -326,9 +320,7 @@ class _QueryObserverContext(ObserverContext):
         self.query_token = self.__class__.query_ctx.set(self)
         self.observer_context: dict[int, Any] = {}
 
-    def __exit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
-    ) -> None:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
         if self.sql is not None:
             if exc_val is not None:
                 self.conn.observe_query_error(

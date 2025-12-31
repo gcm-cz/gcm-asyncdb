@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import datetime
 from asyncio import AbstractEventLoop
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from ssl import SSLContext
-from typing import Any, Callable, Optional
+from typing import Any
 
 import aiomysql
 from pymysql.constants import COMMAND, FIELD_TYPE
@@ -48,33 +48,33 @@ class AioMySQLConnection(aiomysql.Connection):
     def __init__(
         self,
         host: str = "localhost",
-        user: Optional[str] = None,
+        user: str | None = None,
         password: str = "",
-        db: Optional[str] = None,
+        db: str | None = None,
         port: int = 3306,
-        unix_socket: Optional[str] = None,
+        unix_socket: str | None = None,
         charset: str = "",
-        sql_mode: Optional[str] = None,
-        read_default_file: Optional[str] = None,
-        conv: Optional[dict[int, Callable[[str | bytes], Any]]] = None,
-        use_unicode: Optional[bool] = None,
+        sql_mode: str | None = None,
+        read_default_file: str | None = None,
+        conv: dict[int, Callable[[str | bytes], Any]] | None = None,
+        use_unicode: bool | None = None,
         client_flag: int = 0,
-        init_command: Optional[str] = None,
-        connect_timeout: Optional[int] = None,
-        read_default_group: Optional[int] = None,
+        init_command: str | None = None,
+        connect_timeout: int | None = None,
+        read_default_group: int | None = None,
         autocommit: bool = False,
         echo: bool = False,
         local_infile: bool = False,
-        loop: Optional[AbstractEventLoop] = None,
-        ssl: Optional[SSLContext] = None,
+        loop: AbstractEventLoop | None = None,
+        ssl: SSLContext | None = None,
         auth_plugin: str = "",
         program_name: str = "",
-        server_public_key: Optional[str] = None,
+        server_public_key: str | None = None,
         remote_app: str = "",
-        timezone: Optional[datetime.tzinfo] = datetime.timezone.utc,
-        read_timeout: Optional[int] = None,
-        write_timeout: Optional[int] = None,
-        wait_timeout: Optional[int] = None,
+        timezone: datetime.tzinfo | None = datetime.UTC,
+        read_timeout: int | None = None,
+        write_timeout: int | None = None,
+        wait_timeout: int | None = None,
     ) -> None:
         # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
         """

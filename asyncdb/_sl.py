@@ -1,6 +1,6 @@
 from contextvars import ContextVar
 from types import TracebackType
-from typing import Optional, Self, Type
+from typing import Self
 
 
 class _SL:
@@ -39,9 +39,7 @@ class _SL:
         _SL.inc(self._inc)
         return self
 
-    def __exit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
-    ) -> None:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
         """
         Decrease stack level on exiting context.
         """

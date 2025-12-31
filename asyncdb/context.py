@@ -1,5 +1,6 @@
+from collections.abc import Awaitable
 from types import TracebackType
-from typing import Any, Awaitable, Generic, Optional, Type, TypeVar
+from typing import Any, Generic, TypeVar
 
 from ._sl import _SL
 from .asyncdb import Transaction
@@ -26,7 +27,7 @@ class TransactionContext(Generic[T]):
         :param awaitable: Awaitable that returns transaction instance to be started.
         """
         self.awaitable = awaitable
-        self.trx: Optional[T] = None
+        self.trx: T | None = None
 
     async def __aenter__(self) -> T:
         """Start the transaction on async context entry."""
@@ -35,7 +36,7 @@ class TransactionContext(Generic[T]):
             return await self.trx.__aenter__()
 
     async def __aexit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
     ) -> None:
         """Exits the transaction on async context exit."""
         if self.trx is not None:

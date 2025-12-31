@@ -6,20 +6,12 @@ Base classes for working with database transactions and results. Each individual
 
 import inspect
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, MutableSequence, MutableSet, Sequence
 from types import TracebackType
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
     Generic,
-    Iterable,
-    MutableSequence,
-    MutableSet,
-    Optional,
     Self,
-    Sequence,
-    Type,
     cast,
     overload,
 )
@@ -59,7 +51,7 @@ class Result(ABC):
     """
 
     @overload
-    async def fetch_list(self, /) -> Optional[list[Any]]:
+    async def fetch_list(self, /) -> list[Any] | None:
         """
         Fetch one row from result as `list` (indexed column access).
 
@@ -86,7 +78,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]:
+    async def fetch_list(self, cls: type[ListT], /, *args: Any, **kwargs: Any) -> ListT | None:
         """
         Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument.
 
@@ -121,7 +113,7 @@ class Result(ABC):
         """
 
     @abstractmethod
-    async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
+    async def fetch_list(self, cls: type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> ListT | list[Any] | None:
         """
         Fetch one row from result as list (indexed column access). The list type can be specified as the cls argument,
         defaults to `list`.
@@ -152,7 +144,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_dict(self, /) -> Optional[dict[str, Any]]:
+    async def fetch_dict(self, /) -> dict[str, Any] | None:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
 
@@ -179,7 +171,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> Optional[DictT]:
+    async def fetch_dict(self, cls: type[DictT], /, *args: Any, **kwargs: Any) -> DictT | None:
         """
         Fetch one row from result as dictionary. The dictionary type can be specified as the cls argument.
 
@@ -215,8 +207,8 @@ class Result(ABC):
 
     @abstractmethod
     async def fetch_dict(
-        self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
-    ) -> Optional[DictT | dict[str, Any]]:
+        self, cls: type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
+    ) -> DictT | dict[str, Any] | None:
         """
         Fetch one row from result as dictionary (mapping). The dictionary type can be specified as the cls argument. Defaults
         to `dict`.
@@ -247,7 +239,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_object(self, /) -> Optional[ResultRow]:
+    async def fetch_object(self, /) -> ResultRow | None:
         """
         Fetch one row from result as `ResultRow` objects.
 
@@ -276,9 +268,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_object(
-        self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
-    ) -> Optional[OBJ]:
+    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = False, **kwargs: Any) -> OBJ | None:
         """
         Fetch one row from result as object of type specified by the cls argument.
 
@@ -319,8 +309,8 @@ class Result(ABC):
 
     @abstractmethod
     async def fetch_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
-    ) -> Optional[OBJ | ResultRow]:
+        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+    ) -> OBJ | ResultRow | None:
         """
         Fetch one row from result as object of type specified by the cls argument. Defaults to generic `ResultRow` object.
 
@@ -361,7 +351,7 @@ class Result(ABC):
 
     @staticmethod
     async def _fetch_all(
-        method: Callable[[Any, Any, Any], Awaitable[Any]], cls: Type[OBJ] | Callable[..., OBJ], *args: Any, **kwargs: Any
+        method: Callable[[Any, Any, Any], Awaitable[Any]], cls: type[OBJ] | Callable[..., OBJ], *args: Any, **kwargs: Any
     ) -> AsyncGenerator[OBJ, None]:
         while True:
             row = await method(cls, *args, **kwargs)
@@ -436,7 +426,7 @@ class Result(ABC):
         """
 
     async def fetch_all_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
     ) -> AsyncGenerator[ResultRow | OBJ, None]:
         """
         Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
@@ -501,7 +491,7 @@ class Result(ABC):
         """
 
     @overload
-    def fetch_all_dict(self, cls: Type[DictT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[DictT, None]:
+    def fetch_all_dict(self, cls: type[DictT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[DictT, None]:
         """
         Generate dicts of type `cls` for each row of the result set, with optionally passing args and kwargs to the
         cls constructor.
@@ -533,7 +523,7 @@ class Result(ABC):
         """
 
     async def fetch_all_dict(
-        self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
+        self, cls: type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, **kwargs: Any
     ) -> AsyncGenerator[DictT | dict[str, Any], None]:
         """
         Generate dicts of type `cls` for each row of the result set, with optionally passing args and kwargs to the
@@ -592,7 +582,7 @@ class Result(ABC):
         """
 
     @overload
-    def fetch_all_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[ListT, None]:
+    def fetch_all_list(self, cls: type[ListT], /, *args: Any, **kwargs: Any) -> AsyncGenerator[ListT, None]:
         """
         Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
         cls constructor.
@@ -627,7 +617,7 @@ class Result(ABC):
         """
 
     async def fetch_all_list(
-        self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any
+        self, cls: type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any
     ) -> AsyncGenerator[ListT | list[Any], None]:
         """
         Generate lists of type cls for each row of the result set, with optionally passing args and kwargs to the
@@ -680,7 +670,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_all_scalar(self, factory: Type[SetT]) -> SetT:
+    async def fetch_all_scalar(self, factory: type[SetT]) -> SetT:
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
 
@@ -703,7 +693,7 @@ class Result(ABC):
         """
 
     @overload
-    async def fetch_all_scalar(self, factory: Type[ListT]) -> ListT:
+    async def fetch_all_scalar(self, factory: type[ListT]) -> ListT:
         """
         Fetch all rows from result as a list of scalars. Only for queries returning single column.
 
@@ -730,7 +720,7 @@ class Result(ABC):
         :param factory: Factory to use for the output type.
         """
 
-    async def fetch_all_scalar(self, factory: Type[SetT | ListT | list[Any]] = list) -> SetT | ListT | list[Any]:
+    async def fetch_all_scalar(self, factory: type[SetT | ListT | list[Any]] = list) -> SetT | ListT | list[Any]:
         """
         Fetch all rows from the result set as scalars.
 
@@ -813,40 +803,40 @@ class BoolResult(Result, ABC):
         self._bool_result = bool_result
 
     @overload
-    async def fetch_list(self, /) -> Optional[list[Any]]: ...
+    async def fetch_list(self, /) -> list[Any] | None: ...
 
     @overload
-    async def fetch_list(self, cls: Type[ListT], /, *args: Any, **kwargs: Any) -> Optional[ListT]: ...
+    async def fetch_list(self, cls: type[ListT], /, *args: Any, **kwargs: Any) -> ListT | None: ...
 
-    async def fetch_list(self, cls: Type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> Optional[ListT | list[Any]]:
+    async def fetch_list(self, cls: type[ListT | list[Any]] = list, /, *args: Any, **kwargs: Any) -> ListT | list[Any] | None:
         """
         On BoolResult, you cannot fetch any rows, so this method always raises an error.
         """
         raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
 
     @overload
-    async def fetch_dict(self, /) -> Optional[dict[str, Any]]: ...
+    async def fetch_dict(self, /) -> dict[str, Any] | None: ...
 
     @overload
-    async def fetch_dict(self, cls: Type[DictT], /, *args: Any, as_kwargs: bool = False, **kwargs: Any) -> Optional[DictT]: ...
+    async def fetch_dict(self, cls: type[DictT], /, *args: Any, as_kwargs: bool = False, **kwargs: Any) -> DictT | None: ...
 
     async def fetch_dict(
-        self, cls: Type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
-    ) -> Optional[DictT | dict[str, Any]]:
+        self, cls: type[DictT | dict[str, Any]] = dict[str, Any], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+    ) -> DictT | dict[str, Any] | None:
         """
         On BoolResult, you cannot fetch any rows, so this method always raises an error.
         """
         raise Error("Cannot fetch list from query that did not return result set.", remote_app=self.remote_app)
 
     @overload
-    async def fetch_object(self, /) -> Optional[ResultRow]: ...
+    async def fetch_object(self, /) -> ResultRow | None: ...
 
     @overload
-    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, **kwargs: Any) -> Optional[OBJ]: ...
+    async def fetch_object(self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, **kwargs: Any) -> OBJ | None: ...
 
     async def fetch_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow, /, *args: Any, **kwargs: Any
-    ) -> Optional[OBJ | ResultRow]:
+        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, **kwargs: Any
+    ) -> OBJ | ResultRow | None:
         """
         On BoolResult, you cannot fetch any rows, so this method always raises an error.
         """
@@ -935,7 +925,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         return self
 
     async def __aexit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
     ) -> None:
         """
         If transaction is not explicitly committed or rollbacked, it is rollbacked as cleanup strategy.
@@ -1104,8 +1094,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         self,
         result_fetcher: Callable[..., Callable[..., Awaitable[Any]]],
         query: str | ExecutableStatement,
-        args: Optional[Iterable[Any]] | Type[T] | Callable[..., T],
-        cls: Type[T] | Callable[..., T],
+        args: Iterable[Any] | None | type[T] | Callable[..., T],
+        cls: type[T] | Callable[..., T],
         *cls_args: Any,
         **cls_kwargs: Any,
     ) -> T:
@@ -1129,7 +1119,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
             return row
 
     @overload
-    async def get_object(self, query: str, args: Optional[Iterable[Any]] = None, /) -> ResultRow:
+    async def get_object(self, query: str, args: Iterable[Any] | None = None, /) -> ResultRow:
         """
         Retrieve single object from the database. The query must return exactly one row, which will be
         converted to object using standard `Result.fetch_object()`.
@@ -1180,7 +1170,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
 
     @overload
     async def get_object(
-        self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        self, query: str, args: Iterable[Any] | None = None, cls: type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> OBJ:
         """
         Retrieve single object from the database. The query must return exactly one row, which will be
@@ -1222,7 +1212,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         """
 
     @overload
-    async def get_object(self, query: ExecutableStatement, cls: Type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any) -> OBJ:
+    async def get_object(self, query: ExecutableStatement, cls: type[OBJ] = ..., /, *cls_args: Any, **cls_kwargs: Any) -> OBJ:
         """
         Retrieve single object from the database. The query must return exactly one row, which will be
         converted to object using standard `Result.fetch_object()` of specified type.
@@ -1266,7 +1256,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_object(
         self,
         query: str,
-        args: Optional[Iterable[Any]] = None,
+        args: Iterable[Any] | None = None,
         cls: Callable[..., OBJ] = ...,
         /,
         *cls_args: Any,
@@ -1368,8 +1358,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_object(
         self,
         query: str | ExecutableStatement,
-        args: Optional[Iterable[Any]] | OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = None,
-        cls: OBJ_OR_FACTORY[OBJ] | Type[ResultRow] = ResultRow,
+        args: Iterable[Any] | None | OBJ_OR_FACTORY[OBJ] | type[ResultRow] = None,
+        cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow,
         /,
         *cls_args: Any,
         as_kwargs: bool = False,
@@ -1417,26 +1407,26 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
             )
 
     @overload
-    async def get_dict(self, query: str, args: Optional[Iterable[Any]] = None, /) -> dict[str, Any]: ...
+    async def get_dict(self, query: str, args: Iterable[Any] | None = None, /) -> dict[str, Any]: ...
 
     @overload
     async def get_dict(self, query: ExecutableStatement, /) -> dict[str, Any]: ...
 
     @overload
     async def get_dict(
-        self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        self, query: str, args: Iterable[Any] | None = None, cls: type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> DictT: ...
 
     @overload
     async def get_dict(
-        self, query: ExecutableStatement, cls: Type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        self, query: ExecutableStatement, cls: type[DictT] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> DictT: ...
 
     async def get_dict(
         self,
         query: str | ExecutableStatement,
-        args: Optional[Iterable[Any]] | Type[DictT | dict[str, Any]] = None,
-        cls: Type[DictT | dict[str, Any]] = dict,
+        args: Iterable[Any] | None | type[DictT | dict[str, Any]] = None,
+        cls: type[DictT | dict[str, Any]] = dict,
         /,
         *cls_args: Any,
         **cls_kwargs: Any,
@@ -1472,26 +1462,26 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
             return await self._get(lambda res: res.fetch_dict, query, args, cls, *cls_args, **cls_kwargs)
 
     @overload
-    async def get_list(self, query: str, args: Optional[Iterable[Any]] = None, /) -> list[Any]: ...
+    async def get_list(self, query: str, args: Iterable[Any] | None = None, /) -> list[Any]: ...
 
     @overload
     async def get_list(self, query: ExecutableStatement, /) -> list[Any]: ...
 
     @overload
     async def get_list(
-        self, query: str, args: Optional[Iterable[Any]] = None, cls: Type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        self, query: str, args: Iterable[Any] | None = None, cls: type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> ListT: ...
 
     @overload
     async def get_list(
-        self, query: ExecutableStatement, cls: Type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
+        self, query: ExecutableStatement, cls: type[ListT] = ..., /, *cls_args: Any, **cls_kwargs: Any
     ) -> ListT: ...
 
     async def get_list(
         self,
         query: str | ExecutableStatement,
-        args: Optional[Iterable[Any]] | Type[ListT | list[Any]] = None,
-        cls: Type[ListT | list[Any]] = list,
+        args: Iterable[Any] | None | type[ListT | list[Any]] = None,
+        cls: type[ListT | list[Any]] = list,
         /,
         *cls_args: Any,
         **cls_kwargs: Any,
@@ -1530,12 +1520,12 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
             return await self._get(lambda res: res.fetch_list, query, args, cls, *cls_args, **cls_kwargs)
 
     @overload
-    async def get_scalar(self, query: str, args: Optional[Iterable[Any]] = None) -> Any: ...
+    async def get_scalar(self, query: str, args: Iterable[Any] | None = None) -> Any: ...
 
     @overload
     async def get_scalar(self, query: ExecutableStatement) -> Any: ...
 
-    async def get_scalar(self, query: str | ExecutableStatement, args: Optional[Iterable[Any]] = None) -> Any:
+    async def get_scalar(self, query: str | ExecutableStatement, args: Iterable[Any] | None = None) -> Any:
         """
         Retrieve single value from the database. The query must return exactly one row and that
         row must contain exactly one column, which is then returned from this method.
@@ -1626,9 +1616,9 @@ class ObjectFetcher(Generic[ResObjT]):
     def __init__(
         self,
         q: Result,
-        cls: Type[ResultRow | ResObjT] | Callable[..., ResObjT] = ResultRow,
-        cls_args: Optional[Iterable[Any]] = None,
-        cls_kwargs: Optional[dict[str, Any]] = None,
+        cls: type[ResultRow | ResObjT] | Callable[..., ResObjT] = ResultRow,
+        cls_args: Iterable[Any] | None = None,
+        cls_kwargs: dict[str, Any] | None = None,
         as_kwargs: bool = True,
     ):
         """

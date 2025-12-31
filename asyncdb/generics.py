@@ -1,4 +1,5 @@
-from typing import Any, Callable, MutableMapping, MutableSequence, MutableSet, Type
+from collections.abc import Callable, MutableMapping, MutableSequence, MutableSet
+from typing import Any
 
 from typing_extensions import TypeVar
 
@@ -9,7 +10,7 @@ DICT = MutableMapping[str, Any]
 LST = MutableSequence[Any]
 SET = MutableSet[Any]
 FETCH = TypeVar("FETCH")
-OBJ_OR_FACTORY = Type[OBJ] | Callable[..., OBJ]
+OBJ_OR_FACTORY = type[OBJ] | Callable[..., OBJ]
 
 ArgsT = TypeVar("ArgsT", bound=tuple[Any, ...])
 DictT = TypeVar("DictT", bound=DICT)

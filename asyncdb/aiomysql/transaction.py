@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from enum import Enum
 from functools import wraps
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, Self, Type, overload
+from typing import TYPE_CHECKING, Any, Literal, Self, overload
 from warnings import warn
 
 from aiomysql.connection import MySQLResult
@@ -74,11 +74,11 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     def __init__(
         self,
         connection: AioMySQLConnection,
-        isolation_level: Optional[TransactionIsolationLevel] = None,
-        observers: Optional[Collection[TransactionObserver]] = None,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        isolation_level: TransactionIsolationLevel | None = None,
+        observers: Collection[TransactionObserver] | None = None,
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
     ):
         """
         Create new transaction on top of existing AioMySQLConnection.
@@ -112,7 +112,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self._isolation_level = isolation_level
         self._transaction_open = True
         self._transaction_initiated = False
-        self._last_result: Optional[Result] = None
+        self._last_result: Result | None = None
 
         self._retry_stop = retry_stop
         self._retry_wait = retry_wait
@@ -161,7 +161,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         return await super().__aenter__()
 
     async def __aexit__(
-        self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
     ) -> None:
         """
         Exit async context. Rollback the transaction if it is still open.
@@ -242,7 +242,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self.observers.remove(observer)
 
     @property
-    def isolation_level(self) -> Optional[TransactionIsolationLevel]:
+    def isolation_level(self) -> TransactionIsolationLevel | None:
         """
         Get current isolation level of this transaction.
 
@@ -578,7 +578,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     ## DB-API 2.0 compatibility methods follows. They are deprecated and should not be used. ##
 
     @deprecated("Use Transaction.query() instead.")
-    async def execute(self, query: str, args: Optional[tuple[Any, ...]] = None) -> int | None:
+    async def execute(self, query: str, args: tuple[Any, ...] | None = None) -> int | None:
         """
         Execute single query inside the transaction scope.
 
@@ -627,7 +627,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         """
 
     @deprecated("Use Transaction.query() instead.")
-    async def callproc(self, procname: str, args: Optional[ArgsT] = None) -> Optional[ArgsT]:
+    async def callproc(self, procname: str, args: ArgsT | None = None) -> ArgsT | None:
         """
         Call stored procedure with arguments.
 
@@ -646,7 +646,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         return args
 
     @deprecated("Use Result.fetch_dict() instead.")
-    async def fetchone(self) -> Optional[dict[str, Any]]:
+    async def fetchone(self) -> dict[str, Any] | None:
         """
         Fetch one row from the last query result.
 
@@ -661,7 +661,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         return await self._last_result.fetch_dict()
 
     @deprecated("Use Result.fetch_all_dict() instead.")
-    async def fetchmany(self, size: Optional[int] = None) -> list[dict[str, Any]]:
+    async def fetchmany(self, size: int | None = None) -> list[dict[str, Any]]:
         """
         Fetch multiple rows from the last query result.
 
@@ -750,7 +750,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     def retry(
         self,
         /,
-        func: Optional[Callable[..., Awaitable[Any]]] = None,
+        func: Callable[..., Awaitable[Any]] | None = None,
     ) -> Callable[..., Awaitable[Any]]: ...
 
     @overload
@@ -758,19 +758,19 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self,
         /,
         *,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_stop: StopBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
     ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]: ...
 
     def retry(
         self,
         /,
-        func: Optional[Callable[..., Awaitable[Any]]] = None,
+        func: Callable[..., Awaitable[Any]] | None = None,
         *,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_stop: StopBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
     ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]] | Callable[..., Awaitable[Any]]:
         """
         Constructs decorator to decorate methods that should be retried in case of deadlock. Note that you must retry the whole

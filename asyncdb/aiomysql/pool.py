@@ -1,7 +1,7 @@
 import asyncio
-from collections.abc import Collection
+from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional, Type
+from typing import Any
 
 import aiomysql
 from tenacity.retry import RetryBaseT
@@ -24,10 +24,10 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
 
     def __init__(
         self,
-        config: Optional[MySQLConfigProtocol] = None,
-        connection_class: Type[AioMySQLConnection] = AioMySQLConnection,
-        connection_observers: Optional[Collection[QueryObserver]] = None,
-        transaction_observers: Optional[Collection[TransactionObserver]] = None,
+        config: MySQLConfigProtocol | None = None,
+        connection_class: type[AioMySQLConnection] = AioMySQLConnection,
+        connection_observers: Collection[QueryObserver] | None = None,
+        transaction_observers: Collection[TransactionObserver] | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -121,7 +121,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
                     await asyncio.wait_for(conn._connect(), self.config.connect_timeout)
                     conn.logger.debug("Connected!", stacklevel=sl.get())
                     return conn
-                except (aiomysql.OperationalError, asyncio.TimeoutError) as exc:
+                except (TimeoutError, aiomysql.OperationalError) as exc:
                     if hasattr(exc, "__cause__") and exc.__cause__:
                         conn.logger.error(
                             "Connection failed with %s (caused by %s)",
@@ -166,11 +166,11 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
 
     async def get_transaction(  # type: ignore[override]
         self,
-        isolation_level: Optional[TransactionIsolationLevel] = None,
+        isolation_level: TransactionIsolationLevel | None = None,
         *,
-        retry_stop: Optional[StopBaseT] = None,
-        retry_wait: Optional[WaitBaseT] = None,
-        retry_retry: Optional[RetryBaseT] = None,
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
         stacklevel: int = 1,
     ) -> Transaction:
         # pylint: disable=arguments-differ
@@ -197,12 +197,12 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
 @asynccontextmanager
 async def transaction(
     pool: MySQLConnectionPool,
-    isolation_level: Optional[TransactionIsolationLevel] = None,
-    timeout: Optional[float] = None,  # noqa: ASYNC109
+    isolation_level: TransactionIsolationLevel | None = None,
+    timeout: float | None = None,  # noqa: ASYNC109
     *,
-    retry_stop: Optional[StopBaseT] = None,
-    retry_wait: Optional[WaitBaseT] = None,
-    retry_retry: Optional[RetryBaseT] = None,
+    retry_stop: StopBaseT | None = None,
+    retry_wait: WaitBaseT | None = None,
+    retry_retry: RetryBaseT | None = None,
 ) -> AsyncGenerator[Transaction, None]:
     """
     Return database transaction from the pool as async context.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from time import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from tenacity import RetryCallState
 
@@ -26,7 +26,7 @@ class LoggingObserver(QueryObserver):
         self.logger = logger
 
     def observe_query_before(
-        self, conn: AioMySQLConnection, query: str, *, logger: Optional[logging.Logger] = None, stacklevel: int = 0, **kwargs: Any
+        self, conn: AioMySQLConnection, query: str, *, logger: logging.Logger | None = None, stacklevel: int = 0, **kwargs: Any
     ) -> float:
         """Log start of query execution."""
         (logger or self.logger).debug("Executing %s", query, stacklevel=_SL.get() + stacklevel)
@@ -38,7 +38,7 @@ class LoggingObserver(QueryObserver):
         query: str,
         context: float,
         *,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         stacklevel: int = 0,
         **kwargs: Any,
     ) -> None:
@@ -52,7 +52,7 @@ class LoggingObserver(QueryObserver):
         error: BaseException,
         context: float,
         *,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         stacklevel: int = 0,
         **kwargs: Any,
     ) -> None:
