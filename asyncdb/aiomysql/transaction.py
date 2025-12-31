@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Collection
 from enum import Enum
 from functools import wraps
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, Self, Type, cast, overload
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, Self, Type, overload
 from warnings import warn
 
+from aiomysql.connection import MySQLResult
 from tenacity import RetryCallState, retry, retry_any
 from tenacity.retry import RetryBaseT
 from tenacity.stop import StopBaseT
@@ -19,7 +21,6 @@ from ..asyncdb import Transaction as AsyncTransactionBase
 from ..exceptions import ImplicitRollback, LogicError
 from ..generics import ArgsT
 from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
-from .cursor import Cursor
 from .error import _query_error_factory
 from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
 from .observers.logging_observer import TransactionLoggingObserver
@@ -108,8 +109,6 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         """
         super().__init__(connection)
 
-        self._cursor: Optional[Cursor] = None
-
         self._isolation_level = isolation_level
         self._transaction_open = True
         self._transaction_initiated = False
@@ -120,6 +119,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self._retry_retry = retry_retry
 
         self._cursor_clean = True
+
+        self._lastrowid: int = 0  # Result of last insert ID.
 
         self.observers: set[TransactionObserver] = set()
         """Observers attached to the transaction."""
@@ -335,7 +336,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>> asyncio.run(main())
         """
         await self._check_transaction_open("")
-        return cast(int, (await self._get_cursor()).lastrowid)
+        return self._last_result._result.insert_id if self._last_result else 0  # pylint: disable=protected-access
 
     async def affected_rows(self) -> int:
         """
@@ -355,7 +356,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>> asyncio.run(main())
         """
         await self._check_transaction_open("")
-        return (await self._get_cursor()).rowcount
+        return self._connection.affected_rows()
 
     async def commit(self) -> None:
         """
@@ -458,31 +459,12 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             )
 
         self._last_result = None
-
-        if self._cursor and not self._cursor.closed:
-            await self._cursor.close()
-
-        self._cursor = None
         self._cursor_clean = True
 
     @property
     def connection(self) -> AioMySQLConnection:
         """Return connection associated with this transaction."""
         return self._connection
-
-    @property
-    @deprecated("Do not access cursor directly, use Transaction.query() instead.")
-    async def cursor(self) -> Cursor:
-        """
-        Get cursor for executing queries. Should not be needed, one should use query() method instead.
-        """
-        return await self._get_cursor()
-
-    async def _get_cursor(self) -> Cursor:
-        if not self._cursor:
-            self._cursor = cast(Cursor, await self._connection.cursor())
-
-        return self._cursor
 
     async def cleanup(self) -> None:
         """
@@ -500,9 +482,16 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
                 "", "Commands out of sync: You must first process all rows from previous result.", remote_app=self.remote_app
             )
 
-        if self._cursor:
-            await self._cursor.close()
-            self._cursor = None
+    def _escape_args(self, args: Any) -> Any:
+        if isinstance(args, (tuple, list)):
+            return tuple(self._connection.escape(arg) for arg in args)
+
+        if isinstance(args, dict):
+            return {key: self._connection.escape(val) for (key, val) in args.items()}
+
+        # If it's not a dictionary let's try escaping it anyways.
+        # Worst case it will throw a Value error
+        return self._connection.escape(args)
 
     async def query(self, query: str | ExecutableStatement, *args: Any, **kwargs: Any) -> Result:
         """
@@ -533,39 +522,51 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             result set.
         :raises: `asyncdb.exceptions.QueryError` (or subclass of) if there was an error processing the query.
         """
-        with _SL(3):
-            await self._check_transaction_open(query)
+        await self._check_transaction_open(query)
+        if not self._cursor_clean:
+            raise LogicError(
+                str(query),
+                f"Commands out of sync: You must first process all rows from previous result {self._cursor_clean} {id(self)}.",
+                remote_app=self.remote_app,
+            )
 
-            if not self._cursor_clean:
-                raise LogicError(
-                    str(query),
-                    f"Commands out of sync: You must first process all rows from previous "
-                    f"result {self._cursor_clean} {id(self)}.",
-                    remote_app=self.remote_app,
-                )
+        if kwargs:
+            raise LogicError(str(query), "aiomysql does not support kwargs in query.", remote_app=self.remote_app)
 
-            if kwargs:
-                raise LogicError(str(query), "aiomysql does not support kwargs in query.", remote_app=self.remote_app)
+        try:
+            if isinstance(query, ExecutableStatement):
+                query_pattern = str(query)
+                query_args: Collection[Any] = query.args
 
-            cursor = await self._get_cursor()
+            else:
+                query_pattern = query
+                query_args = args
 
-            try:
-                if isinstance(query, ExecutableStatement):
-                    await cursor.execute(str(query), query.args)
-                else:
-                    await cursor.execute(query, args)
+            formatted_query = query_pattern % self._escape_args(query_args)
 
-            # pylint: disable=broad-exception-caught
-            except Exception as exc:
-                _query_error_factory(str(query), exc, self.connection)
+            with _SL(2):
+                await self._connection.query(formatted_query, query_pattern=query_pattern, query_args=query_args)
 
-            if cursor.description:
-                self._cursor_clean = False
-                self._last_result = Result(self, cursor, f"{query!s} with args {args}" if args else repr(query))
-                return self._last_result
+        # pylint: disable=broad-exception-caught
+        except Exception as exc:
+            _query_error_factory(str(query), exc, self.connection)
 
-            self._last_result = None
-            return BoolResult(self, True, f"{query!s} with args {args}" if args else repr(query))
+        result: MySQLResult = self._connection._result  # pylint: disable=protected-access
+
+        if result.warning_count > 0:
+            ws = await self._connection.show_warnings()
+            if ws:
+                for warning in ws:
+                    warnings.warn(str(warning[-1]), Warning, stacklevel=_SL.get() + 2)
+
+        if result.description:
+            self._cursor_clean = False
+            self._last_result = Result(self, result, f"{query!s} with args {args}" if args else repr(query))
+
+        else:
+            self._last_result = BoolResult(self, True, result, f"{query!s} with args {args}" if args else repr(query))
+
+        return self._last_result
 
     @property
     def remote_app(self) -> str:
@@ -654,7 +655,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         :return: One row from the result as dictionary. None if there are no more rows.
         """
-        if not self._last_result:
+        if not self._last_result or isinstance(self._last_result, BoolResult):
             raise LogicError("", "Last query did not produce result. Unable to fetch rows.", remote_app=self.remote_app)
 
         return await self._last_result.fetch_dict()
@@ -670,16 +671,13 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param size: Number of rows to fetch. If None, fetch all rows.
         :return: List of rows from the result as list of dictionaries.
         """
-        if not self._last_result:
+        if not self._last_result or isinstance(self._last_result, BoolResult):
             raise LogicError("", "Last query did not produce result. Unable to fetch rows.", remote_app=self.remote_app)
 
         out: list[dict[str, Any]] = []
 
         if size is None:
-            if self._last_result.cursor:
-                size = self._last_result.cursor.arraysize
-            else:
-                size = 1000
+            size = 1000
 
         while size > 0:
             row = await self._last_result.fetch_dict()
@@ -701,7 +699,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         :return: All rows from the result as list of dictionaries.
         """
-        if not self._last_result:
+        if not self._last_result or isinstance(self._last_result, BoolResult):
             raise LogicError("", "Last query did not produce result. Unable to fetch rows.", remote_app=self.remote_app)
 
         return [row async for row in self._last_result.fetch_all_dict()]
@@ -713,7 +711,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param value: Amount of rows to advance if `mode = "absolute"` or offset from current position if `mode = "relative"`.
         :param mode: `absolute` or `relative` determining how the result set will be scrolled.
         """
-        if not self._last_result:
+        if not self._last_result or isinstance(self._last_result, BoolResult):
             raise LogicError("", "Last query did not produce result. Unable to scroll.", remote_app=self.remote_app)
 
         await self._last_result.scroll(value, mode)

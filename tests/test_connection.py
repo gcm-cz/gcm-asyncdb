@@ -11,10 +11,10 @@ from dateutil import tz
 from asyncdb import LogicError, ObjectFetcher, ResultRow
 from asyncdb.aiomysql import (
     AioMySQLConnection,
-    Transaction,
-    TransactionIsolationLevel,
     MySQLConfig,
+    Transaction,
     TransactionFactory,
+    TransactionIsolationLevel,
 )
 from asyncdb.aiomysql.pool import transaction
 from asyncdb.aiomysql.result import BoolResult
@@ -280,11 +280,33 @@ async def test_datetime_ms(connection: AioMySQLConnection) -> None:
         fetched_dt = await transaction.get_scalar("SELECT `dt_ms` FROM `test`")
         assert fetched_dt == dt
 
-        fetched_dt: datetime = await transaction.get_scalar("SELECT `ts` FROM `test`")
+        fetched_dt = await transaction.get_scalar("SELECT `ts` FROM `test`")
         assert fetched_dt == dt.replace(microsecond=0)
 
         fetched_dt = await transaction.get_scalar("SELECT `ts_ms` FROM `test`")
         assert fetched_dt == dt
+
+        await transaction.commit()
+
+
+@pytest.mark.asyncio
+async def test_datetime_zero(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
+        await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `ts` TIMESTAMP)")
+        await transaction.query("INSERT INTO `test` (`dt`, `ts`) VALUES ('0000-00-00 00:00:00', '0000-00-00 00:00:00')")
+
+        assert await transaction.get_scalar("SELECT CONCAT('a', `dt`) FROM `test`") == "a0000-00-00 00:00:00"
+        assert await transaction.get_scalar("SELECT CONCAT('a', `ts`) FROM `test`") == "a0000-00-00 00:00:00"
+
+        fetched_dt = await transaction.get_scalar("SELECT `dt` FROM `test`")
+        assert (
+            fetched_dt == "0000-00-00 00:00:00"
+        )  # MySQL returns string for zero date when sql_mode does not include NO_ZERO_DATE
+
+        fetched_ts: datetime = await transaction.get_scalar("SELECT `ts` FROM `test`")
+        assert (
+            fetched_ts == "0000-00-00 00:00:00"
+        )  # MySQL returns string for zero timestamp when sql_mode does not include NO_ZERO_DATE
 
         await transaction.commit()
 
@@ -493,9 +515,6 @@ async def test_dbapi_2_compatibility(connection: AioMySQLConnection) -> None:
 
         with pytest.warns(DeprecationWarning):
             await trx.execute("SELECT 1 AS `a` UNION SELECT 2 AS `a`")
-
-        with pytest.warns(DeprecationWarning):
-            (await trx.cursor).arraysize = 1000
 
         with pytest.warns(DeprecationWarning):
             assert await trx.fetchmany() == [{"a": 1}, {"a": 2}]

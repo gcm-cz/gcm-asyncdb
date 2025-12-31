@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from copy import copy
 from typing import TYPE_CHECKING, Any, Literal, Optional, Type, overload
+
+from aiomysql.connection import MySQLResult
 
 from ..asyncdb import BoolResult as BoolResultBase
 from ..asyncdb import Result as AsyncResultBase
 from ..exceptions import LogicError, ScrollIndexError
 from ..generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
-from .cursor import Cursor
 
 if TYPE_CHECKING:
     from .transaction import Transaction  # pylint: disable=cyclic-import  # pragma: no cover
@@ -42,7 +44,7 @@ class Result(AsyncResultBase):
     >>> asyncio.run(main())
     """
 
-    def __init__(self, transaction: Transaction, cursor: Optional[Cursor], query: str) -> None:
+    def __init__(self, transaction: Transaction, result: MySQLResult, query: str) -> None:
         """
         :param transaction: Transaction that produced the query.
         :param cursor: Underlying cursor for accessing the result set.
@@ -52,11 +54,14 @@ class Result(AsyncResultBase):
         self.transaction = transaction
         """Transaction that produced the query."""
 
-        self.cursor = cursor
+        self._result: MySQLResult | None = result
         """Underlying cursor for accessing the result set."""
 
         self._closed = False
         self._query = query
+
+        # When store result is used, store rows in this buffer.
+        self._rownumber = 0
 
     async def close(self) -> None:
         """
@@ -65,28 +70,50 @@ class Result(AsyncResultBase):
         if self._closed:
             return
 
-        if self.cursor:
-            # Consume all rows in current result set.
-            while await self.cursor.fetchone():
+        # Consume all rows in current result set.
+        while await self._fetchone():
+            pass
+
+        # Consume all remaining result sets.
+        while await self._nextset():
+            while await self._fetchone():
                 pass
 
-            # Consume all remaining result sets.
-            while await self.cursor.nextset():
-                while await self.cursor.fetchone():
-                    pass
-
-            # pylint: disable=protected-access
-            await self.transaction._clean_cursor(self)
+        # pylint: disable=protected-access
+        await self.transaction._clean_cursor(self)
 
         self._closed = True
 
-    async def _fetch_raw(self) -> Optional[Any]:
-        if not self.cursor:
+    async def _fetchone(self) -> Collection[Any] | None:
+        """Fetch next row from the result set. Returns None if no more rows are available."""
+        if self._result.rows is None or self._rownumber >= len(self._result.rows):
             return None
 
-        row = await self.cursor.fetchone()
-        if not row and await self.cursor.nextset():
-            row = await self.cursor.fetchone()
+        result = self._result.rows[self._rownumber]
+        self._rownumber += 1
+        return result
+
+    async def _nextset(self) -> bool:
+        """Move to the next result set. Returns True if there is a next result set, False otherwise."""
+        conn = self.transaction.connection
+
+        # Some sanity checking first.
+        if self._result is None or self._result is not conn._result:  # pylint: disable=protected-access
+            return False
+
+        if not self._result.has_next:
+            return False
+
+        await conn.next_result()
+        self._result = conn._result  # pylint: disable=protected-access
+        self._rownumber = 0
+
+        return True
+
+    async def _fetch_raw(self) -> Optional[Any]:
+        row = await self._fetchone()
+        if not row and await self._nextset():
+            row = await self._fetchone()
 
         if not row:
             await self.close()
@@ -102,17 +129,21 @@ class Result(AsyncResultBase):
             - For `mode = "absolute"`: Absolute position to scroll to, 0-indexed.
         :param mode: Scroll mode. Can be 'absolute' or 'relative'.
         """
-        if not self.cursor:
-            return
+        if mode == "relative":
+            r = self._rownumber + value
+        elif mode == "absolute":
+            r = value
+        else:
+            raise ValueError("mode must be 'absolute' or 'relative'")
 
-        try:
-            await self.cursor.scroll(value, mode)
-        except IndexError as exc:
+        if not 0 <= r < len(self._result.rows):
             raise ScrollIndexError(
                 "",
-                str(exc),
+                "out of range",
                 remote_app=self.remote_app,
-            ) from exc
+            )
+
+        self._rownumber = r
 
     @overload
     async def fetch_list(self, /) -> Optional[list[Any]]:
@@ -547,7 +578,7 @@ class Result(AsyncResultBase):
 
         :param factory: Factory to use for the output type. Can be MutableSet or MutableSequence. Defaults to `list`.
         """
-        if len(self.description) != 1:
+        if self.description and len(self.description) != 1:
             raise LogicError(self._query, "Query returned more than one column.", remote_app=self.remote_app)
 
         return await super().fetch_all_scalar(factory)
@@ -557,10 +588,7 @@ class Result(AsyncResultBase):
         """
         Description of the columns in the result set.
         """
-        if not self.cursor:
-            return []
-
-        return self.cursor.description
+        return self._result.description
 
     @property
     def remote_app(self) -> str:
@@ -596,8 +624,8 @@ class BoolResult(BoolResultBase, Result):
     >>>     # True
     """
 
-    def __init__(self, transaction: Transaction, bool_result: bool, query: str) -> None:
-        super().__init__(transaction, None, query, bool_result=bool_result)
+    def __init__(self, transaction: Transaction, bool_result: bool, result: MySQLResult, query: str) -> None:
+        super().__init__(transaction, result, query, bool_result=bool_result)
 
     def __repr__(self) -> str:
         return f"<Result {self._bool_result}>"

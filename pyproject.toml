@@ -4,7 +4,7 @@ name = "gcm-asyncdb"
 
 [tool.poetry]
 name = "gcm-asyncdb"
-version = "0.0.0"
+version = "2.2.0"
 description = "Alternative approach to database API with full native async support and connection pool."
 authors = ["Michal Kuchta <niximor@gmail.com>"]
 readme = "README.md"
@@ -36,7 +36,8 @@ prometheus-client = "^0"
 wrapt = "^1"
 tenacity = "^9.1.2"
 typing-extensions = "^4.14.0"
-sqlfactory = {version = "^1.17.1", extras = ["sqlfactory"]}
+sqlfactory = { version = "^1.17.1", extras = ["sqlfactory"] }
+opentelemetry-api = { version = "^1.39.1" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7"
@@ -99,26 +100,26 @@ line-length = 130
 [tool.ruff.lint]
 # see https://docs.astral.sh/ruff/rules/ for more information about what checks each option adds
 select = [
-    "F",     # pyflakes
-    "E",     # pycodestyle (former pep8) error
-    "W",     # pycodestyle (former pep8) warning
-    "I",     # isort
-    "N",     # pep8-naming
-    "RUF",   # RUFF's own rules
-    "B",     # flake8-bugbear
-    "S",     # flake8-bandit
-    "A",     # flake8-builtins
+    "F", # pyflakes
+    "E", # pycodestyle (former pep8) error
+    "W", # pycodestyle (former pep8) warning
+    "I", # isort
+    "N", # pep8-naming
+    "RUF", # RUFF's own rules
+    "B", # flake8-bugbear
+    "S", # flake8-bandit
+    "A", # flake8-builtins
     "ASYNC", # flake8-async
-    "DTZ",   # flake8-datetimez
-    "YTT",   # flake8-annotations
-    "C4",    # flake8-comprehension
-    "G",     # flake8-logging-format
+    "DTZ", # flake8-datetimez
+    "YTT", # flake8-annotations
+    "C4", # flake8-comprehension
+    "G", # flake8-logging-format
 ]
 ignore = [
-    "N818",  # https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/
-    "S608",  # https://docs.astral.sh/ruff/rules/hardcoded-sql-expression/
+    "N818", # https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/
+    "S608", # https://docs.astral.sh/ruff/rules/hardcoded-sql-expression/
 ]
 
 [tool.pytest.ini_options]
-asyncio_mode="auto"
-log_cli_level="DEBUG"
+asyncio_mode = "auto"
+log_cli_level = "DEBUG"

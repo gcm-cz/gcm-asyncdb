@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import datetime
 from asyncio import AbstractEventLoop
+from collections.abc import Collection
 from ssl import SSLContext
-from typing import Any, Callable, Optional, Type, cast
+from typing import Any, Callable, Optional
 
 import aiomysql
 from pymysql.constants import COMMAND, FIELD_TYPE
@@ -11,7 +12,6 @@ from pymysql.converters import convert_datetime, decoders
 
 from .. import logger
 from .._sl import _SL
-from .cursor import Cursor
 from .observer import ObserverContext, QueryObserver, _QueryObserverContext
 from .observers.logging_observer import LoggingObserver
 
@@ -59,7 +59,6 @@ class AioMySQLConnection(aiomysql.Connection):
         conv: Optional[dict[int, Callable[[str | bytes], Any]]] = None,
         use_unicode: Optional[bool] = None,
         client_flag: int = 0,
-        cursorclass: Type[Cursor] = Cursor,
         init_command: Optional[str] = None,
         connect_timeout: Optional[int] = None,
         read_default_group: Optional[int] = None,
@@ -93,7 +92,6 @@ class AioMySQLConnection(aiomysql.Connection):
         :param conv: Decoders dictionary to use instead of the default one. This is used to provide custom marshalling of types.
         :param use_unicode: Whether or not to default to unicode strings.
         :param client_flag: Custom flags to send to MySQL. Find potential values in pymysql.constants.CLIENT.
-        :param cursorclass: Custom cursor class to use.
         :param init_command: Initial SQL statement to run when connection is established.
         :param connect_timeout: Timeout before throwing an exception when connecting.
         :param read_default_group: Group to read from in the configuration file.
@@ -120,8 +118,12 @@ class AioMySQLConnection(aiomysql.Connection):
 
         if timezone is not None:
             # Produce timezone-aware datetimes with specified timezone information.
-            def convert_datetime_with_tz(obj: Any) -> datetime.datetime:
-                return cast(datetime.datetime, convert_datetime(obj)).replace(tzinfo=self.timezone)
+            def convert_datetime_with_tz(obj: Any) -> Any:
+                converted = convert_datetime(obj)
+                if isinstance(converted, datetime.datetime):
+                    return converted.replace(tzinfo=timezone)
+
+                return converted
 
             conv[FIELD_TYPE.DATETIME] = convert_datetime_with_tz
             conv[FIELD_TYPE.TIMESTAMP] = convert_datetime_with_tz
@@ -144,30 +146,29 @@ class AioMySQLConnection(aiomysql.Connection):
             init_command = f"SET wait_timeout={wait_timeout}; {init_command or ''}"
 
         super().__init__(
-            host,
-            user,
-            password,
-            db,
-            port,
-            unix_socket,
-            charset,
-            sql_mode,
-            read_default_file,
-            conv,
-            use_unicode,
-            client_flag,
-            cursorclass,
-            init_command,
-            connect_timeout,
-            read_default_group,
-            autocommit,
-            echo,
-            local_infile,
-            loop,
-            ssl,
-            auth_plugin,
-            program_name,
-            server_public_key,
+            host=host,
+            user=user,
+            password=password,
+            db=db,
+            port=port,
+            unix_socket=unix_socket,
+            charset=charset,
+            sql_mode=sql_mode,
+            read_default_file=read_default_file,
+            conv=conv,
+            use_unicode=use_unicode,
+            client_flag=client_flag,
+            init_command=init_command,
+            connect_timeout=connect_timeout,
+            read_default_group=read_default_group,
+            autocommit=autocommit,
+            echo=echo,
+            local_infile=local_infile,
+            loop=loop,
+            ssl=ssl,
+            auth_plugin=auth_plugin,
+            program_name=program_name,
+            server_public_key=server_public_key,
         )
 
         self.timezone = timezone
@@ -196,7 +197,7 @@ class AioMySQLConnection(aiomysql.Connection):
         self.observers.remove(observer)
 
     async def _connect(self) -> None:
-        with _SL():
+        with _SL(1):
             await super()._connect()
 
     def escape(self, obj: Any) -> str:
@@ -208,10 +209,12 @@ class AioMySQLConnection(aiomysql.Connection):
 
         return super().escape(obj)
 
-    def observe_query_before(self, sql: str, **kwargs: Any) -> dict[int, Any]:
+    def observe_query_before(self, sql: str, *, query_pattern: str, query_args: Collection[Any], **kwargs: Any) -> dict[int, Any]:
         """
         Callback called before query execution.
         :param sql: SQL query
+        :param query_pattern: Original query pattern used for the execution
+        :param query_args: Query arguments used for the execution
         :param kwargs: Additional kwargs passed to the observer
         :return: Results from the observer callbacks, that are passed to the after and error callbacks.
         """
@@ -220,34 +223,66 @@ class AioMySQLConnection(aiomysql.Connection):
         with _SL():
             with ObserverContext(**kwargs) as ctx:
                 for observer in self.observers:
-                    observer_context[id(observer)] = observer.observe_query_before(self, sql, **ctx.kwargs())
+                    observer_context[id(observer)] = observer.observe_query_before(
+                        self, sql, query_pattern=query_pattern, query_args=query_args, **ctx.kwargs()
+                    )
 
             return observer_context
 
-    def observe_query_after(self, sql: str, observer_context: dict[int, Any], **kwargs: Any) -> None:
+    def observe_query_after(
+        self, sql: str, observer_context: dict[int, Any], *, query_pattern: str, query_args: Collection[Any], **kwargs: Any
+    ) -> None:
         """
         Callback called after query execution.
         :param sql: SQL query
         :param observer_context: Context from the before callback
+        :param query_pattern: Original query pattern used for the execution
+        :param query_args: Query arguments used for the execution
         :param kwargs: Additional kwargs passed to the observer while executing the query.
         """
         with _SL():
             with ObserverContext(**kwargs) as ctx:
                 for observer in self.observers:
-                    observer.observe_query_after(self, sql, observer_context.get(id(observer)), **ctx.kwargs())
+                    observer.observe_query_after(
+                        self,
+                        sql,
+                        observer_context.get(id(observer)),
+                        query_pattern=query_pattern,
+                        query_args=query_args,
+                        **ctx.kwargs(),
+                    )
 
-    def observe_query_error(self, sql: str, exc: BaseException, observer_context: dict[int, Any], **kwargs: Any) -> None:
+    def observe_query_error(
+        self,
+        sql: str,
+        exc: BaseException,
+        observer_context: dict[int, Any],
+        *,
+        query_pattern: str,
+        query_args: Collection[Any],
+        **kwargs: Any,
+    ) -> None:
         """
         Callback called when query execution raises an exception.
         :param sql: SQL query
         :param exc: Exception raised
         :param observer_context: Context from the before callback
+        :param query_pattern: Original query pattern used for the execution
+        :param query_args: Query arguments used for the execution
         :param kwargs: Additional kwargs passed to the observer while executing the query.
         """
         with _SL():
             with ObserverContext(**kwargs) as ctx:
                 for observer in self.observers:
-                    observer.observe_query_error(self, sql, exc, observer_context.get(id(observer)), **ctx.kwargs())
+                    observer.observe_query_error(
+                        self,
+                        sql,
+                        exc,
+                        observer_context.get(id(observer)),
+                        query_pattern=query_pattern,
+                        query_args=query_args,
+                        **ctx.kwargs(),
+                    )
 
     async def _execute_command(self, command: int, sql: str | bytes) -> None:
         """Override aiomysql's _execute_command to provide query observing."""
@@ -256,7 +291,9 @@ class AioMySQLConnection(aiomysql.Connection):
                 ctx = _QueryObserverContext.query_ctx.get()
                 if ctx is not None:
                     ctx.sql = sql.decode("utf-8") if isinstance(sql, bytes) else sql
-                    ctx.observer_context = self.observe_query_before(ctx.sql, **ctx.kwargs())
+                    ctx.observer_context = self.observe_query_before(
+                        ctx.sql, query_pattern=ctx.query_pattern, query_args=ctx.query_args, **ctx.kwargs()
+                    )
 
             await super()._execute_command(command, sql)
 
