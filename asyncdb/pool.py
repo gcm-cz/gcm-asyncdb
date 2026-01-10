@@ -35,8 +35,6 @@ if TYPE_CHECKING:
 
 
 class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
-    # pylint: disable=abstract-method
-
     """
     @private
 
@@ -73,8 +71,6 @@ class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
 
 
 class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
-    # pylint: disable=abstract-method
-
     """
     @private
 

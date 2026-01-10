@@ -230,7 +230,13 @@ class AioMySQLConnection(aiomysql.Connection):
             return observer_context
 
     def observe_query_after(
-        self, sql: str, observer_context: dict[int, Any], *, query_pattern: str, query_args: Collection[Any], **kwargs: Any
+        self,
+        sql: str,
+        observer_context: dict[int, Any],
+        *,
+        query_pattern: str,
+        query_args: Collection[Any],
+        **kwargs: Any,
     ) -> None:
         """
         Callback called after query execution.
@@ -290,7 +296,7 @@ class AioMySQLConnection(aiomysql.Connection):
             if command == COMMAND.COM_QUERY:
                 ctx = _QueryObserverContext.query_ctx.get()
                 if ctx is not None:
-                    ctx.sql = sql.decode("utf-8") if isinstance(sql, bytes) else sql
+                    ctx.sql = sql.decode("utf-8", "backslashreplace") if isinstance(sql, bytes) else sql
                     ctx.observer_context = self.observe_query_before(
                         ctx.sql, query_pattern=ctx.query_pattern, query_args=ctx.query_args, **ctx.kwargs()
                     )

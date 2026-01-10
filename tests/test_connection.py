@@ -786,3 +786,18 @@ async def test_duplicate_entry(connection: AioMySQLConnection) -> None:
 
             with pytest.raises(DuplicateEntry):
                 await trx.query("INSERT INTO `test` (`id`, `name`) VALUES (1, 'Test')")
+
+
+@pytest.mark.asyncio
+async def test_binary_data(connection: AioMySQLConnection) -> None:
+    data = os.urandom(256)
+
+    async with Transaction(connection) as trx:
+        await trx.query("CREATE TEMPORARY TABLE `test` (`data` BLOB)")
+        await trx.query("INSERT INTO `test` (`data`) VALUES (%s)", data)
+
+        fetched_data: bytes = await trx.get_scalar("SELECT `data` FROM `test`")
+        assert type(fetched_data) is bytes
+        assert fetched_data == data
+
+        await trx.commit()
