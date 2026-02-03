@@ -152,3 +152,21 @@ class ScrollIndexError(QueryError, IndexError):
     """
     Index error while seeking.
     """
+
+
+class IsolationLevelMismatch(RuntimeError):
+    """
+    Raised when trying to reuse an existing transaction with a different isolation level.
+    """
+
+
+class OutsideTransactionContext(RuntimeError):
+    """
+    Raised when trying to access a shared transaction from outside of transaction context.
+    """
+
+
+class SharedRollback(RuntimeWarning, RuntimeError):
+    """
+    Raised on commit of main transaction when a shared transaction has been rolled back.
+    """

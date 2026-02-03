@@ -10,7 +10,7 @@ from tenacity.wait import WaitBaseT
 
 from .. import logger
 from .._sl import _SL
-from ..pool import CountedConnection, DatabaseConnectionPool
+from ..pool import DatabaseConnectionPool
 from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
 from .observer import ObserverContext, QueryObserver, TransactionObserver
@@ -136,7 +136,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
                     conn.logger.exception(exc, stacklevel=sl.get())
                     raise
 
-    async def check_conn(self, conn: CountedConnection[AioMySQLConnection]) -> bool:
+    async def check_conn(self, conn: AioMySQLConnection) -> bool:
         """
         Check whether given connection is healthy. Returning True means the connection can be used for next
         transactions, False it should be discarded.
@@ -172,6 +172,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
         stacklevel: int = 1,
+        **kwargs: Any,
     ) -> Transaction:
         # pylint: disable=arguments-differ
         """
@@ -191,6 +192,7 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
             retry_stop=retry_stop,
             retry_wait=retry_wait,
             retry_retry=retry_retry,
+            **kwargs,
         )
 
 

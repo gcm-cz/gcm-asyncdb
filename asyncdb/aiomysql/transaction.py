@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable, Collection
-from enum import Enum
+from enum import Enum, StrEnum
 from functools import wraps
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
 from warnings import warn
 
 from aiomysql.connection import MySQLResult
@@ -18,7 +18,7 @@ from typing_extensions import deprecated
 from .._sl import _SL
 from .._sqlfactory_compat import ExecutableStatement
 from ..asyncdb import Transaction as AsyncTransactionBase
-from ..exceptions import ImplicitRollback, LogicError
+from ..exceptions import ImplicitRollback, LogicError, SharedRollback
 from ..generics import ArgsT
 from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
 from .error import _query_error_factory
@@ -30,13 +30,22 @@ if TYPE_CHECKING:
     from .connection import AioMySQLConnection  # pragma: no cover
 
 
-class TransactionIsolationLevel(str, Enum):
+class TransactionIsolationLevel(StrEnum):
     """Transaction isolation level. See MySQL documentation for explanation."""
 
     REPEATABLE_READ = "REPEATABLE READ"
     READ_COMMITTED = "READ COMMITTED"
     READ_UNCOMMITTED = "READ UNCOMMITTED"
     SERIALIZABLE = "SERIALIZABLE"
+
+
+class SharedRollbackMode(Enum):
+    """Rollback mode for shared transactions."""
+
+    IGNORE = 0  # Ignore the rollback in shared transaction, commit the main transaction normally.
+    PROPAGATE = 1  # Propagate the rollback to the main transaction, causing it to rollback as well.
+    WARN = 2  # Propagate the rollback to the main transaction and emit warning.
+    RAISE = 3  # Propagate the rollback to the main transaction and raise `SharedRollback` exception.
 
 
 class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
@@ -71,6 +80,8 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     >>> asyncio.run(main())
     """
 
+    __trx_id_counter__: ClassVar[int] = 0
+
     def __init__(
         self,
         connection: AioMySQLConnection,
@@ -79,6 +90,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
+        shared_rollback_mode: SharedRollbackMode = SharedRollbackMode.WARN,
     ):
         """
         Create new transaction on top of existing AioMySQLConnection.
@@ -106,8 +118,11 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param retry_stop: Optional tenacity stop condition for deadlock retries.
         :param retry_wait: Optional tenacity wait condition for deadlock retries.
         :param retry_retry: Optional tenacity retry condition for deadlock retries.
+        :param shared_rollback_mode: Rollback mode when rollback occurs in shared transaction.
         """
         super().__init__(connection)
+
+        self._trx_id = Transaction.__trx_id_counter__ = Transaction.__trx_id_counter__ + 1
 
         self._isolation_level = isolation_level
         self._transaction_open = True
@@ -121,6 +136,9 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self._cursor_clean = True
 
         self._lastrowid: int = 0  # Result of last insert ID.
+
+        self.__shared_can_commit__: bool = True
+        self.__shared_mode__: SharedRollbackMode = shared_rollback_mode
 
         self.observers: set[TransactionObserver] = set()
         """Observers attached to the transaction."""
@@ -136,6 +154,13 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         if observers:
             for observer in observers:
                 self.attach(observer)
+
+    @property
+    def trx_id(self) -> int:
+        """
+        Get unique transaction ID.
+        """
+        return self._trx_id
 
     async def __aenter__(self) -> Self:
         """
@@ -277,16 +302,22 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
                 self._transaction_initiated = True
 
-            if self._isolation_level is not None:
-                await self._connection.query(f"SET TRANSACTION ISOLATION LEVEL {self._isolation_level.value}")
-
             with _SL(2):
                 with ObserverContext() as ctx:
                     try:
+                        for observer in self.observers:
+                            self.observer_context[id(observer)] = observer.observe_transaction_before(self, **ctx.kwargs())
+
+                        if self._isolation_level is not None:
+                            with _SL(-2):
+                                await self._connection.query(f"SET TRANSACTION ISOLATION LEVEL {self._isolation_level.value}")
+
                         await self._connection.begin()
 
                         for observer in self.observers:
-                            self.observer_context[id(observer)] = observer.observe_transaction_start(self, **ctx.kwargs())
+                            start_ctx = observer.observe_transaction_start(self, **ctx.kwargs())
+                            if start_ctx is not None or id(observer) not in self.observer_context:
+                                self.observer_context[id(observer)] = start_ctx
 
                     # pylint: disable=broad-exception-caught
                     except Exception as exc:
@@ -378,6 +409,23 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>>
         >>> asyncio.run(main())
         """
+        if not self.__shared_can_commit__ and self.__shared_mode__ != SharedRollbackMode.IGNORE:
+            with _SL():
+                await self.rollback()
+
+                match self.__shared_mode__:
+                    case SharedRollbackMode.WARN:
+                        warn(
+                            "Shared transaction rollback propagated to main transaction.",
+                            SharedRollback,
+                            stacklevel=_SL.get() + 2,
+                        )
+
+                    case SharedRollbackMode.RAISE:
+                        raise SharedRollback("Shared transaction rollback propagated to main transaction.")
+
+            return
+
         with _SL(2):
             with ObserverContext() as ctx:
                 await self._check_transaction_open("COMMIT")

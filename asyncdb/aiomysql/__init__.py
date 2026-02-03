@@ -27,18 +27,23 @@ async with db.transaction() as trx:
 from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
 from .factory import TransactionFactory
-from .observer import QueryObserver, TransactionObserver
+from .observer import GenericQueryObserver, GenericTransactionObserver, QueryObserver, TransactionObserver
 from .pool import MySQLConnectionPool
 from .result import Result
-from .transaction import Transaction, TransactionIsolationLevel
+from .shared_factory import SharedTransactionFactory
+from .transaction import SharedRollbackMode, Transaction, TransactionIsolationLevel
 
 __all__ = [
     "AioMySQLConnection",
+    "GenericQueryObserver",
+    "GenericTransactionObserver",
     "MySQLConfig",
     "MySQLConfigProtocol",
     "MySQLConnectionPool",
     "QueryObserver",
     "Result",
+    "SharedRollbackMode",
+    "SharedTransactionFactory",
     "Transaction",
     "TransactionFactory",
     "TransactionIsolationLevel",

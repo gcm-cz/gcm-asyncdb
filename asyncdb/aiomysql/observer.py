@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Collection
 from contextvars import ContextVar, Token
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar
 
 from tenacity import RetryCallState
 
@@ -15,10 +15,16 @@ if TYPE_CHECKING:
     from .transaction import Transaction
 
 
-class QueryObserver(ABC):  # noqa: B024
+QueryContextT = TypeVar("QueryContextT")
+TransactionContextT = TypeVar("TransactionContextT")
+
+
+class GenericQueryObserver(Generic[QueryContextT], ABC):
     """
     Abstract class for query observer. Implement this class to observe query execution. None of the methods actually needs
     to be overwritten, but you can override any of them to hook into any part of query execution process.
+
+    Type-safe base.
 
     Example:
 
@@ -51,9 +57,9 @@ class QueryObserver(ABC):  # noqa: B024
     >>> asyncio.run(main())
     """
 
-    def observe_query_before(  # noqa: B027
+    def observe_query_before(
         self, conn: AioMySQLConnection, query: str, *, query_pattern: str, query_args: Collection[Any], **kwargs: Any
-    ) -> Any:
+    ) -> QueryContextT:
         """
         Called before the query is sent to server for execution.
         :param conn: MySQL connection that this query will be sent to.
@@ -64,11 +70,11 @@ class QueryObserver(ABC):  # noqa: B024
         :return: Any context object that will be passed to observe_query_after and observe_query_error methods.
         """
 
-    def observe_query_after(  # noqa: B027
+    def observe_query_after(
         self,
         conn: AioMySQLConnection,
         query: str,
-        context: Any,
+        context: QueryContextT,
         *,
         query_pattern: str,
         query_args: Collection[Any],
@@ -84,12 +90,12 @@ class QueryObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the query execution method.
         """
 
-    def observe_query_error(  # noqa: B027
+    def observe_query_error(
         self,
         conn: AioMySQLConnection,
         query: str,
         error: BaseException,
-        context: Any,
+        context: QueryContextT,
         *,
         query_pattern: str,
         query_args: Collection[Any],
@@ -107,7 +113,16 @@ class QueryObserver(ABC):  # noqa: B024
         """
 
 
-class TransactionObserver(ABC):  # noqa: B024
+class QueryObserver(GenericQueryObserver[Any], ABC):
+    """
+    Abstract class for query observer. Implement this class to observe query execution. None of the methods actually needs
+    to be overwritten, but you can override any of them to hook into any part of query execution process.
+
+    Type-agnostic backward compatible base.
+    """
+
+
+class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT]):
     """
     Abstract class to observing transaction.
     Implement this class to observe transaction execution. None of the methods actually needs to be overwritten, but you can
@@ -160,16 +175,16 @@ class TransactionObserver(ABC):  # noqa: B024
     >>> asyncio.run(main())
     """
 
-    def observe_query_before(  # noqa: B027
+    def observe_query_before(
         self,
         conn: AioMySQLConnection,
         query: str,
-        trx_context: Any,
+        trx_context: TransactionContextT,
         *,
         query_pattern: str,
         query_args: Collection[Any],
         **kwargs: Any,
-    ) -> Any:
+    ) -> QueryContextT:
         """
         Called before the query is sent to server for execution.
         :param conn: MySQL connection that this query will be sent to.
@@ -181,12 +196,12 @@ class TransactionObserver(ABC):  # noqa: B024
         :return: Any context object that will be passed to observe_query_after and observe_query_error methods.
         """
 
-    def observe_query_after(  # noqa: B027
+    def observe_query_after(
         self,
         conn: AioMySQLConnection,
         query: str,
-        context: Any,
-        trx_context: Any,
+        context: QueryContextT,
+        trx_context: TransactionContextT,
         *,
         query_pattern: str,
         query_args: Collection[Any],
@@ -203,13 +218,13 @@ class TransactionObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the query execution method.
         """
 
-    def observe_query_error(  # noqa: B027
+    def observe_query_error(
         self,
         conn: AioMySQLConnection,
         query: str,
         error: BaseException,
-        context: Any,
-        trx_context: Any,
+        context: QueryContextT,
+        trx_context: TransactionContextT,
         *,
         query_pattern: str,
         query_args: Collection[Any],
@@ -227,16 +242,26 @@ class TransactionObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the query execution method.
         """
 
-    def observe_transaction_start(self, trx: Transaction, **kwargs: Any) -> Any:  # noqa: B027
+    def observe_transaction_before(self, trx: Transaction, **kwargs: Any) -> TransactionContextT:
         """
-        Called when the transaction is started.
+        Called just before the transaction is started.
         :param trx: Transaction object that is being started.
         :param kwargs: Additional kwargs passed to the transaction start method.
         :return: Any context object that will be passed to observe_transaction_end, observe_transaction_commit and observe
           transaction_rollback methods.
         """
 
-    def observe_transaction_end(self, trx: Transaction, context: Any, **kwargs: Any) -> None:  # noqa: B027
+    def observe_transaction_start(self, trx: Transaction, **kwargs: Any) -> TransactionContextT:
+        """
+        Called when the transaction is started.
+        :param trx: Transaction object that is being started.
+        :param kwargs: Additional kwargs passed to the transaction start method.
+        :return: Any context object that will be passed to observe_transaction_end, observe_transaction_commit and observe
+          transaction_rollback methods. If context has been already returned by observe_transaction_before, that context
+          is overwritten.
+        """
+
+    def observe_transaction_end(self, trx: Transaction, context: TransactionContextT, **kwargs: Any) -> None:
         """
         Called when the transaction is ended either by commit or rollback.
         :param trx: Transaction object that is being ended.
@@ -244,7 +269,7 @@ class TransactionObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the transaction end method.
         """
 
-    def observe_transaction_commit(self, trx: Transaction, context: Any, **kwargs: Any) -> None:  # noqa: B027
+    def observe_transaction_commit(self, trx: Transaction, context: TransactionContextT, **kwargs: Any) -> None:
         """
         Called when the transaction is committed.
         :param trx: Transaction object that is being committed.
@@ -252,7 +277,7 @@ class TransactionObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the transaction commit method.
         """
 
-    def observe_transaction_rollback(self, trx: Transaction, context: Any, **kwargs: Any) -> None:  # noqa: B027
+    def observe_transaction_rollback(self, trx: Transaction, context: TransactionContextT, **kwargs: Any) -> None:
         """
         Called when the transaction is rolled back.
         :param trx: Transaction object that is being rolled back.
@@ -260,13 +285,23 @@ class TransactionObserver(ABC):  # noqa: B024
         :param kwargs: Additional kwargs passed to the transaction rollback method.
         """
 
-    def observe_transaction_retry(self, trx: Transaction, context: Any, retry_state: RetryCallState) -> None:  # noqa: B027
+    def observe_transaction_retry(self, trx: Transaction, context: TransactionContextT, retry_state: RetryCallState) -> None:
         """
         Called when the transaction is to be retried.
         :param trx: Transaction object that is being retried.
         :param context: Context object returned by observe_transaction_start method.
         :param retry_state: Additional kwargs passed to the transaction retry method.
         """
+
+
+class TransactionObserver(GenericTransactionObserver[Any, Any], ABC):
+    """
+    Abstract class to observing transaction.
+    Implement this class to observe transaction execution. None of the methods actually needs to be overwritten, but you can
+    override any of them to hook into any part of transaction execution process.
+
+    Type-agnostic backward compatible base.
+    """
 
 
 class ObserverContext:

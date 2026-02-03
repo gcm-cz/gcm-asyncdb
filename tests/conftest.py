@@ -1,9 +1,10 @@
 import os
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 
-from asyncdb.aiomysql import MySQLConfig, QueryObserver, AioMySQLConnection, TransactionFactory, MySQLConnectionPool, Transaction
+from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, MySQLConnectionPool, QueryObserver, Transaction, TransactionFactory
 
 
 @pytest.fixture
@@ -14,7 +15,7 @@ def config() -> MySQLConfig:
         user=os.getenv("TEST_MYSQL_USER", "root"),
         password=os.getenv("TEST_MYSQL_PASSWORD", ""),
         database=os.getenv("TEST_MYSQL_DATABASE", "test"),
-        max_pool_size=1,
+        max_pool_size=2,
     )
 
 

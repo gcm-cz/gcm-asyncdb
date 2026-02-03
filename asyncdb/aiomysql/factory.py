@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Collection
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
-from typing import ClassVar, cast
+from typing import ClassVar, NotRequired, TypedDict, Unpack, cast
 
 from tenacity import AsyncRetrying, AttemptManager, RetryCallState, retry_any
 from tenacity.retry import RetryBaseT
@@ -14,7 +14,16 @@ from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT, MySQL
 from .connection import AioMySQLConnection
 from .observer import QueryObserver, TransactionObserver
 from .pool import MySQLConnectionPool
-from .transaction import Transaction, TransactionIsolationLevel
+from .transaction import SharedRollbackMode, Transaction, TransactionIsolationLevel
+
+
+class TransactionKwargs(TypedDict, total=False):
+    """
+    Default additional arguments for transaction creation.
+    """
+
+    stacklevel: int
+    shared_rollback_mode: NotRequired[SharedRollbackMode]
 
 
 class TransactionFactory:
@@ -116,6 +125,7 @@ class TransactionFactory:
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
+        **kwargs: Unpack[TransactionKwargs],
     ) -> None:
         # pylint: disable=too-many-arguments
         """
@@ -131,6 +141,7 @@ class TransactionFactory:
         :param retry_wait: Default tenacity wait strategy for deadlock retries.
             If None, default from `config.DEFAULT_RETRY_WAIT` will be used.
         :param retry_retry: Default tenacity retry condition for deadlock retries, on top of default Deadlock.
+        :param kwargs: Additional arguments passed to the transaction creation.
         """
         self._cache_key = (config.host, config.port, config.user, config.database)
 
@@ -148,6 +159,7 @@ class TransactionFactory:
         self._retry_stop = retry_stop
         self._retry_wait = retry_wait
         self._retry_retry = retry_retry
+        self._kwargs = kwargs
 
     def ensure_pool(self, *, keeper_task: bool = True) -> None:
         # pylint: disable=protected-access
@@ -200,15 +212,36 @@ class TransactionFactory:
         >>>     await trx.commit()
         >>>     return out
         """
-        async with await asyncio.wait_for(
-            self.pool.get_transaction(
-                self.isolation_level,
-                retry_stop=self._retry_stop,
-                retry_wait=self._retry_wait,
-            ),
+        async with await self._get_transaction_from_pool(
+            self.isolation_level,
             self.config.connect_timeout,
+            retry_stop=self._retry_stop,
+            retry_wait=self._retry_wait,
+            retry_retry=self._retry_retry,
+            **self._kwargs,
         ) as trx:
             yield trx
+
+    async def _get_transaction_from_pool(
+        self,
+        isolation_level: TransactionIsolationLevel | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109
+        *,
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
+        **kwargs: Unpack[TransactionKwargs],
+    ) -> Transaction:
+        return await asyncio.wait_for(
+            self.pool.get_transaction(
+                isolation_level,
+                retry_stop=retry_stop,
+                retry_wait=retry_wait,
+                retry_retry=retry_retry,
+                **kwargs,
+            ),
+            timeout,
+        )
 
     def transaction(
         self,
@@ -218,6 +251,7 @@ class TransactionFactory:
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
+        **kwargs: Unpack[TransactionKwargs],
     ) -> TransactionContext[Transaction]:
         """
         Returns transaction with optionally specifying isolation level and / or timeout for the connection.
@@ -246,14 +280,14 @@ class TransactionFactory:
         :raises: asyncio.TimeoutError if healthy connection cannot be acquired in given timeout.
         """
         return TransactionContext[Transaction](
-            asyncio.wait_for(
-                self.pool.get_transaction(
-                    isolation_level or self.isolation_level,
-                    retry_stop=retry_stop or self._retry_stop,
-                    retry_wait=retry_wait or self._retry_wait,
-                    retry_retry=retry_retry or self._retry_retry,
-                ),
+            # No await here, as it is awaited when entering the context.
+            self._get_transaction_from_pool(
+                isolation_level or self.isolation_level,
                 timeout or self.config.connect_timeout,
+                retry_stop=retry_stop or self._retry_stop,
+                retry_wait=retry_wait or self._retry_wait,
+                retry_retry=retry_retry or self._retry_retry,
+                **kwargs,
             )
         )
 
@@ -265,6 +299,7 @@ class TransactionFactory:
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
+        **kwargs: Unpack[TransactionKwargs],
     ) -> AsyncGenerator[_AsyncGeneratorContextManager[Transaction], None]:
         """
         Generator version of the Transaction's deadlock retry decorator. The difference is, that decorator uses the same
@@ -295,6 +330,7 @@ class TransactionFactory:
         :param retry_wait: Wait strategy for tenacity retrying. If None, default from factory is used.
         :param retry_retry: Retry condition for tenacity retrying, to specify additional retryable errors.
           If None, default from factory is used. Note that `Deadlock` is always retried.
+        :param kwargs: Optional additional keyword arguments to pass to the transaction call.
         :return:
         """
 
@@ -321,5 +357,5 @@ class TransactionFactory:
                 before_sleep=_observe_retry,
                 reraise=True,
             ):
-                async with self.transaction(isolation_level=isolation_level, timeout=timeout) as trx:
+                async with self.transaction(isolation_level=isolation_level, timeout=timeout, **kwargs) as trx:
                     yield trx_context(trx, attempt)

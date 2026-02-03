@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 from collections.abc import Awaitable
 from types import TracebackType
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from ._sl import _SL
 from .asyncdb import Transaction
+from .types import ObjectProxy
 
 T = TypeVar("T", bound=Transaction[Any])
 
@@ -22,7 +25,7 @@ class TransactionContext(Generic[T]):
     >>>    ...
     """
 
-    def __init__(self, awaitable: Awaitable[T]) -> None:
+    def __init__(self, awaitable: Awaitable[T | ObjectProxy[T]]) -> None:
         """
         :param awaitable: Awaitable that returns transaction instance to be started.
         """
@@ -31,7 +34,7 @@ class TransactionContext(Generic[T]):
 
     async def __aenter__(self) -> T:
         """Start the transaction on async context entry."""
-        self.trx = await self.awaitable
+        self.trx = cast(T, await self.awaitable)
         with _SL():
             return await self.trx.__aenter__()
 

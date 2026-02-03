@@ -38,4 +38,4 @@ class ResultRow:
 
 
 ResObjT = TypeVar("ResObjT", default=ResultRow, bound=object)
-ConnectionTypeT = TypeVar("ConnectionTypeT")
+ConnectionTypeT = TypeVar("ConnectionTypeT", default=Any)

@@ -22,19 +22,18 @@ from typing import (
     overload,
 )
 
-import wrapt
-
 from . import logger
 from ._sl import _SL
 from .asyncdb import Result, Transaction
 from .exceptions import UnableToCreateConnection
 from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow
+from .types import ObjectProxy
 
 if TYPE_CHECKING:
     from prometheus_client import Gauge
 
 
-class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
+class CountedConnection(Generic[ConnectionTypeT], ObjectProxy[ConnectionTypeT]):
     """
     @private
 
@@ -53,24 +52,15 @@ class CountedConnection(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         self.created: float = time()
         self.current_transaction: Transaction[ConnectionTypeT] | None = None
 
-    def close(self) -> None | Awaitable[None]:
-        """
-        Close the connection. This is here to provide predictable interface, as connection class might not
-        provide close() method.
-        """
-        if hasattr(self.__wrapped__, "close"):
-            return self.__wrapped__.close()
-
-        return None
-
     def __repr__(self) -> str:
         """
         Add used and created fields to the actual connection representation.
         """
+        # pylint: disable=no-member
         return f"{self.__wrapped__!r} used={self.used}, created={datetime.fromtimestamp(self.created)}"  # noqa: DTZ006
 
 
-class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
+class PooledTransaction(Generic[ConnectionTypeT], ObjectProxy[ConnectionTypeT]):
     """
     @private
 
@@ -87,6 +77,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
 
     async def __aenter__(self) -> Self:
         try:
+            # pylint: disable=no-member
             if hasattr(self.__wrapped__, "__aenter__"):
                 with _SL():
                     await self.__wrapped__.__aenter__()
@@ -105,6 +96,7 @@ class PooledTransaction(Generic[ConnectionTypeT], wrapt.ObjectProxy):
         Return connection to the pool when the transaction's context is left.
         """
         try:
+            # pylint: disable=no-member
             if hasattr(self.__wrapped__, "__aexit__"):
                 with _SL(2):
                     await self.__wrapped__.__aexit__(exc_type, exc_val, exc_tb)
@@ -456,7 +448,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         if self._keeper_task_done:
             self._keeper_task_done.set_name("connection_pool_keeper")
 
-    async def check_conn(self, conn: CountedConnection[ConnectionTypeT]) -> bool:  # pylint: disable=unused-argument, no-self-use
+    async def check_conn(self, conn: ConnectionTypeT) -> bool:  # pylint: disable=unused-argument, no-self-use
         """
         Check connection is healthy and ready to be used.
         :param conn: Connection to be checked.
@@ -524,7 +516,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         """
         try:
             conn: CountedConnection[ConnectionTypeT] = CountedConnection(await self.create_conn())
-            if not await self.check_conn(conn):
+            if not await self.check_conn(cast(ConnectionTypeT, conn)):
                 raise UnableToCreateConnection()
         except Exception as exc:
             raise UnableToCreateConnection() from exc
@@ -580,17 +572,18 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
                 await self.queue.put(conn)
                 self.log.debug("Returned connection %r to pool.", conn)
             else:
-                await self.close_conn(conn)
+                await self.close_conn(cast(ConnectionTypeT, conn))
         finally:
             self._connections_in_use -= 1
 
-    async def close_conn(self, conn: CountedConnection[ConnectionTypeT]) -> None:
+    async def close_conn(self, conn: ConnectionTypeT) -> None:
         """Close one connection."""
         try:
-            if asyncio.iscoroutinefunction(conn.close):
-                await conn.close()
-            else:
-                conn.close()
+            if hasattr(conn, "close"):
+                if asyncio.iscoroutinefunction(conn.close):
+                    await conn.close()
+                else:
+                    conn.close()
         except Exception as exc:  # pylint: disable=broad-except
             self.log.exception("While closing connection %r: %s", conn, exc)
 
@@ -601,7 +594,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         while not self.queue.empty():
             try:
                 conn = self.queue.get_nowait()
-                await self.close_conn(conn)
+                await self.close_conn(cast(ConnectionTypeT, conn))
             except QueueEmpty:
                 pass
 
@@ -623,11 +616,11 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
             conn = await self.queue.get()
             if time() - conn.created >= self.max_conn_lifetime:
                 self.log.debug("Discarding connection %r because it's max lifetime has been reached.", conn)
-                await self.close_conn(conn)
+                await self.close_conn(cast(ConnectionTypeT, conn))
             else:
                 close = False
                 try:
-                    if await self.check_conn(conn):
+                    if await self.check_conn(cast(ConnectionTypeT, conn)):
                         await self.queue.put(conn)
                     else:
                         close = True
@@ -637,13 +630,13 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
 
                 if close:
                     self.log.info("Closing unhealthy connection %r.", conn)
-                    await self.close_conn(conn)
+                    await self.close_conn(cast(ConnectionTypeT, conn))
 
     async def _purge_conns(self, to_purge: int) -> None:
         self.log.debug("Purging %d inactive connections from pool.", to_purge)
         for _ in range(0, to_purge):
             conn = await self.queue.get()
-            await self.close_conn(conn)
+            await self.close_conn(cast(ConnectionTypeT, conn))
 
     async def _create_conns(self, to_create: int) -> None:
         self.log.debug("Creating %d spare connections...", to_create)
@@ -740,7 +733,7 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         self.log.debug("Pool shutdown complete.")
 
 
-TransactionTypeT = TypeVar("TransactionTypeT", bound=Transaction[Any])
+TransactionTypeT = TypeVar("TransactionTypeT", bound=Transaction[Any], default=Transaction[Any])
 
 
 class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], ConnectionPool[ConnectionTypeT]):
@@ -793,7 +786,7 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         """
         conn = await asyncio.wait_for(self.get_conn(stacklevel + 1), timeout=timeout)
         trans = PooledTransaction(self.transaction_class(conn, *args, **kwargs), pool=self)
-        conn.current_transaction = trans
+        conn.current_transaction = cast(TransactionTypeT, trans)
 
         # PooledTransaction is not really a TransactionTypeT, but it is object wrapper that acts like it is. For better
         # type hinting in IDE, we cast this to expected type. In runtime, it just works by proxying all calls to the

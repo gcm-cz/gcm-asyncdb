@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+from contextvars import ContextVar
 from time import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from tenacity import RetryCallState
 
@@ -29,7 +31,11 @@ class LoggingObserver(QueryObserver):
         self, conn: AioMySQLConnection, query: str, *, logger: logging.Logger | None = None, stacklevel: int = 0, **kwargs: Any
     ) -> float:
         """Log start of query execution."""
-        (logger or self.logger).debug("Executing %s", query, stacklevel=_SL.get() + stacklevel)
+        trx_id = TransactionLoggingObserver.trx_id.get()
+        if trx_id is not None:
+            (logger or self.logger).debug("Executing %s [trx %d]", query, trx_id, stacklevel=_SL.get() + stacklevel)
+        else:
+            (logger or self.logger).debug("Executing %s", query, stacklevel=_SL.get() + stacklevel)
         return time()
 
     def observe_query_after(
@@ -65,11 +71,17 @@ class TransactionLoggingObserver(TransactionObserver):
     Observer that logs transaction-related events.
     """
 
+    trx_id: ClassVar[ContextVar[int | None]] = ContextVar("asyncdb.aiomysql.trx_id", default=None)
+
     def __init__(self, logger: logging.Logger) -> None:
         """
         :param logger: Logger to log queries to.
         """
         self.logger = logger
+
+    def observe_transaction_before(self, trx: Transaction, **kwargs: Any) -> Any:
+        """Store transaction ID before starting."""
+        return self.__class__.trx_id.set(trx.trx_id)
 
     def observe_transaction_retry(self, trx: Transaction, context: Any, retry_state: RetryCallState) -> None:
         """Log retry attempt."""
@@ -81,3 +93,8 @@ class TransactionLoggingObserver(TransactionObserver):
             retry_state.outcome.exception(),
             stacklevel=_SL.get(),
         )
+
+    def observe_transaction_end(self, trx: Transaction, context: Any, **kwargs: Any) -> None:
+        """Restore transaction ID at the end."""
+        with contextlib.suppress(ValueError):
+            self.__class__.trx_id.reset(context)

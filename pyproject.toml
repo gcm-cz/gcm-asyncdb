@@ -4,7 +4,7 @@ name = "gcm-asyncdb"
 
 [tool.poetry]
 name = "gcm-asyncdb"
-version = "2.2.0"
+version = "2.4.0"
 description = "Alternative approach to database API with full native async support and connection pool."
 authors = ["Michal Kuchta <niximor@gmail.com>"]
 readme = "README.md"
@@ -29,15 +29,22 @@ Repository = "https://gitlab.com/gcm-cz/gcm-asyncdb"
 Issues = "https://gitlab.com/gcm-cz/gcm-asyncdb/-/issues"
 Documentation = "https://asyncdb.gcm.cz/"
 
+[tool.poetry.extras]
+
+sqlfactory = ["sqlfactory"]
+opentelemetry = ["opentelemetry-api"]
+opentracing = ["opentracing"]
+
 [tool.poetry.dependencies]
 python = "^3.11"
 aiomysql = "^0"
 prometheus-client = "^0"
-wrapt = "^1"
-tenacity = "^9.1.2"
-typing-extensions = "^4.14.0"
-sqlfactory = { version = "^1.17.1", extras = ["sqlfactory"] }
-opentelemetry-api = { version = "^1.39.1" }
+wrapt = ">=1,<3"
+tenacity = "^9"
+typing-extensions = "^4"
+sqlfactory = { version = "^1", optional = true }
+opentelemetry-api = { version = "^1", optional = true }
+opentracing = { version = "^2.4.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9"
