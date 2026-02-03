@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Awaitable, Collection
 from contextvars import ContextVar, Token
 from types import TracebackType
-from typing import Unpack, cast
+from typing import Any, Unpack, cast
 from warnings import warn
 
 from tenacity.retry import RetryBaseT
@@ -17,7 +17,7 @@ from ..types import ObjectProxy
 from .config import MySQLConfigProtocol
 from .connection import AioMySQLConnection
 from .factory import TransactionFactory, TransactionKwargs
-from .observer import QueryObserver, TransactionObserver
+from .observer import GenericQueryObserver, GenericTransactionObserver
 from .transaction import SharedRollbackMode, Transaction, TransactionIsolationLevel
 
 
@@ -160,8 +160,8 @@ class SharedTransactionFactory(TransactionFactory):
         config: MySQLConfigProtocol,
         isolation_level: TransactionIsolationLevel | None = None,
         connection_class: type[AioMySQLConnection] = AioMySQLConnection,
-        connection_observers: Collection[QueryObserver] | None = None,
-        transaction_observers: Collection[TransactionObserver] | None = None,
+        connection_observers: Collection[GenericQueryObserver[Any]] | None = None,
+        transaction_observers: Collection[GenericTransactionObserver[Any, Any]] | None = None,
         *,
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,

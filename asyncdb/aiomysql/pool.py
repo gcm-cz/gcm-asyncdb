@@ -13,7 +13,7 @@ from .._sl import _SL
 from ..pool import DatabaseConnectionPool
 from .config import MySQLConfig, MySQLConfigProtocol
 from .connection import AioMySQLConnection
-from .observer import ObserverContext, QueryObserver, TransactionObserver
+from .observer import GenericQueryObserver, GenericTransactionObserver, ObserverContext
 from .transaction import Transaction, TransactionIsolationLevel
 
 
@@ -26,8 +26,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         self,
         config: MySQLConfigProtocol | None = None,
         connection_class: type[AioMySQLConnection] = AioMySQLConnection,
-        connection_observers: Collection[QueryObserver] | None = None,
-        transaction_observers: Collection[TransactionObserver] | None = None,
+        connection_observers: Collection[GenericQueryObserver[Any]] | None = None,
+        transaction_observers: Collection[GenericTransactionObserver[Any, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         """

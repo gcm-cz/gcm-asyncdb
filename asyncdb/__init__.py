@@ -19,6 +19,7 @@ Currently supported backend connectors:
 - Exception hierarchy for correct and easier error handling.
 - Timezone-aware datetimes (with possible fallback to naive datetimes).
 - Native support for [sqlfactory](https://gitlab.com/gcm-cz/sqlfactory) statements.
+- OpenTracing and OpenTelemetry support.
 
 ## Installation and basic usage
 

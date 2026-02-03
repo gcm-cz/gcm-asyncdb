@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Collection
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
-from typing import ClassVar, NotRequired, TypedDict, Unpack, cast
+from typing import Any, ClassVar, NotRequired, TypedDict, Unpack, cast
 
 from tenacity import AsyncRetrying, AttemptManager, RetryCallState, retry_any
 from tenacity.retry import RetryBaseT
@@ -12,7 +12,7 @@ from .._sl import _SL
 from ..context import TransactionContext
 from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT, MySQLConfigProtocol
 from .connection import AioMySQLConnection
-from .observer import QueryObserver, TransactionObserver
+from .observer import GenericQueryObserver, GenericTransactionObserver
 from .pool import MySQLConnectionPool
 from .transaction import SharedRollbackMode, Transaction, TransactionIsolationLevel
 
@@ -119,8 +119,8 @@ class TransactionFactory:
         config: MySQLConfigProtocol,
         isolation_level: TransactionIsolationLevel | None = None,
         connection_class: type[AioMySQLConnection] = AioMySQLConnection,
-        connection_observers: Collection[QueryObserver] | None = None,
-        transaction_observers: Collection[TransactionObserver] | None = None,
+        connection_observers: Collection[GenericQueryObserver[Any]] | None = None,
+        transaction_observers: Collection[GenericTransactionObserver[Any, Any]] | None = None,
         *,
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,

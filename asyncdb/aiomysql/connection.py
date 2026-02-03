@@ -12,7 +12,7 @@ from pymysql.converters import convert_datetime, decoders
 
 from .. import logger
 from .._sl import _SL
-from .observer import ObserverContext, QueryObserver, _QueryObserverContext
+from .observer import GenericQueryObserver, ObserverContext, _QueryObserverContext
 from .observers.logging_observer import LoggingObserver
 
 
@@ -182,17 +182,17 @@ class AioMySQLConnection(aiomysql.Connection):
         self.logger = logger.getChild(f"mysql.{self.db}") if self.db else logger.getChild("mysql")
         """Logger for this database."""
 
-        self.observers: set[QueryObserver] = {LoggingObserver(self.logger)}
+        self.observers: set[GenericQueryObserver[Any]] = {LoggingObserver(self.logger)}
         """Observers for this connection. By default, LoggingObserver is always present."""
 
         self.remote_app = remote_app or f"{self._user}@{self._host}:{self._port}/{self._db}"
         """Identifier of the connection. Used for logging and is populated to exceptions."""
 
-    def attach(self, observer: QueryObserver) -> None:
+    def attach(self, observer: GenericQueryObserver[Any]) -> None:
         """Attach new observer instance to the connection."""
         self.observers.add(observer)
 
-    def detach(self, observer: QueryObserver) -> None:
+    def detach(self, observer: GenericQueryObserver[Any]) -> None:
         """Detach observer instance from the connection."""
         self.observers.remove(observer)
 

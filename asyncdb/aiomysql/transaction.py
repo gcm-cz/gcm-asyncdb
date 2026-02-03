@@ -22,7 +22,7 @@ from ..exceptions import ImplicitRollback, LogicError, SharedRollback
 from ..generics import ArgsT
 from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
 from .error import _query_error_factory
-from .observer import ObserverContext, TransactionObserver, _TransactionQueryObserver
+from .observer import GenericTransactionObserver, ObserverContext, _TransactionQueryObserver
 from .observers.logging_observer import TransactionLoggingObserver
 from .result import BoolResult, Result
 
@@ -86,7 +86,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self,
         connection: AioMySQLConnection,
         isolation_level: TransactionIsolationLevel | None = None,
-        observers: Collection[TransactionObserver] | None = None,
+        observers: Collection[GenericTransactionObserver[Any, Any]] | None = None,
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
@@ -140,7 +140,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         self.__shared_can_commit__: bool = True
         self.__shared_mode__: SharedRollbackMode = shared_rollback_mode
 
-        self.observers: set[TransactionObserver] = set()
+        self.observers: set[GenericTransactionObserver[Any, Any]] = set()
         """Observers attached to the transaction."""
 
         self.observer_context: dict[int, Any] = {}
@@ -214,7 +214,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         with _SL():
             return await super().__aexit__(exc_type, exc_val, exc_tb)
 
-    def attach(self, observer: TransactionObserver) -> None:
+    def attach(self, observer: GenericTransactionObserver[Any, Any]) -> None:
         """
         Attach observer to the transaction.
 
@@ -260,7 +260,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         """
         self.observers.add(observer)
 
-    def detach(self, observer: TransactionObserver) -> None:
+    def detach(self, observer: GenericTransactionObserver[Any, Any]) -> None:
         """
         Detach observer from the transaction.
         """
@@ -778,7 +778,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
             with _SL(2):
                 for observer in self.observers:
-                    if isinstance(observer, TransactionObserver):
+                    if isinstance(observer, GenericTransactionObserver):
                         observer.observe_transaction_retry(self, self.observer_context.get(id(observer)), retry_state=retry_state)
 
     async def _retry_reset_transaction(self, retry_state: RetryCallState) -> None:
