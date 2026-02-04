@@ -3,7 +3,9 @@ from typing import Any
 from opentracing import Scope, Tracer
 from opentracing.ext import tags
 
-from asyncdb.aiomysql import AioMySQLConnection, GenericTransactionObserver, Transaction
+from asyncdb import Transaction
+from asyncdb.asyncdb.connection import ConnectionProtocol
+from asyncdb.asyncdb.observer import GenericTransactionObserver
 
 
 class OpentracingObserver(GenericTransactionObserver[Scope, Scope]):
@@ -40,7 +42,7 @@ class OpentracingObserver(GenericTransactionObserver[Scope, Scope]):
 
     def observe_query_before(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionProtocol,
         query: str,
         trx_context: Scope,
         *,
@@ -58,7 +60,7 @@ class OpentracingObserver(GenericTransactionObserver[Scope, Scope]):
         return scope
 
     def observe_query_error(
-        self, conn: AioMySQLConnection, query: str, error: BaseException, context: Scope, trx_context: Scope, **kwargs: Any
+        self, conn: ConnectionProtocol, query: str, error: BaseException, context: Scope, trx_context: Scope, **kwargs: Any
     ) -> None:
         """Set error to currently active span (the query span) and close the query scope."""
 
@@ -76,7 +78,7 @@ class OpentracingObserver(GenericTransactionObserver[Scope, Scope]):
         context.close()
 
     def observe_query_after(
-        self, conn: AioMySQLConnection, query: str, context: Scope, trx_context: Scope, **kwargs: Any
+        self, conn: ConnectionProtocol, query: str, context: Scope, trx_context: Scope, **kwargs: Any
     ) -> None:
         """Finish query scope on query success."""
         context.close()

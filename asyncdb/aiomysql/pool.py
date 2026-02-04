@@ -8,13 +8,13 @@ from tenacity.retry import RetryBaseT
 from tenacity.stop import StopBaseT
 from tenacity.wait import WaitBaseT
 
-from .. import logger
-from .._sl import _SL
-from ..pool import DatabaseConnectionPool
-from .config import MySQLConfig, MySQLConfigProtocol
-from .connection import AioMySQLConnection
-from .observer import GenericQueryObserver, GenericTransactionObserver, ObserverContext
-from .transaction import Transaction, TransactionIsolationLevel
+from asyncdb import logger
+from asyncdb._sl import _SL
+from asyncdb.aiomysql.config import MySQLConfig, MySQLConfigProtocol
+from asyncdb.aiomysql.connection import AioMySQLConnection
+from asyncdb.aiomysql.transaction import Transaction, TransactionIsolationLevel
+from asyncdb.asyncdb.observer import GenericQueryObserver, GenericTransactionObserver, ObserverContext
+from asyncdb.pool import DatabaseConnectionPool
 
 
 class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction]):
@@ -26,8 +26,8 @@ class MySQLConnectionPool(DatabaseConnectionPool[AioMySQLConnection, Transaction
         self,
         config: MySQLConfigProtocol | None = None,
         connection_class: type[AioMySQLConnection] = AioMySQLConnection,
-        connection_observers: Collection[GenericQueryObserver[Any]] | None = None,
-        transaction_observers: Collection[GenericTransactionObserver[Any, Any]] | None = None,
+        connection_observers: Collection[GenericQueryObserver[Any, AioMySQLConnection]] | None = None,
+        transaction_observers: Collection[GenericTransactionObserver[Any, Any, AioMySQLConnection, Transaction]] | None = None,
         **kwargs: Any,
     ) -> None:
         """

@@ -10,8 +10,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import Tracer
 
 from asyncdb.aiomysql import MySQLConfig, TransactionFactory
-from asyncdb.aiomysql.observers.opentelemetry_observer import OpenTelemetryTransactionObserver
-from asyncdb.exceptions import QueryError
+from asyncdb.asyncdb.observers.opentelemetry_observer import OpenTelemetryTransactionObserver
+from asyncdb.exceptions import ImplicitRollback, QueryError
 
 
 @pytest.fixture
@@ -62,8 +62,9 @@ async def test_opentelemetry(factory: TransactionFactory, span_exporter: InMemor
         await trx.rollback()
 
     with pytest.raises(QueryError):
-        async with factory.transaction() as trx:
-            await trx.query("PARSE ERROR")
+        with pytest.warns(ImplicitRollback):
+            async with factory.transaction() as trx:
+                await trx.query("PARSE ERROR")
 
     spans = span_exporter.get_finished_spans()
 

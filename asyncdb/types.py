@@ -1,4 +1,5 @@
 from abc import ABC
+from enum import Enum
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 try:
@@ -21,3 +22,12 @@ else:
 
     class ObjectProxy(ABC, Generic[T], BaseObjectProxy):
         """A generic ObjectProxy for runtime purposes."""
+
+
+class SharedRollbackMode(Enum):
+    """Rollback mode for shared transactions."""
+
+    IGNORE = 0  # Ignore the rollback in shared transaction, commit the main transaction normally.
+    PROPAGATE = 1  # Propagate the rollback to the main transaction, causing it to rollback as well.
+    WARN = 2  # Propagate the rollback to the main transaction and emit warning.
+    RAISE = 3  # Propagate the rollback to the main transaction and raise `SharedRollback` exception.

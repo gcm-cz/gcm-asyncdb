@@ -4,7 +4,8 @@ import aiomysql
 from pymysql import InterfaceError
 from pymysql.constants import CR, ER
 
-from ..exceptions import (
+from asyncdb.aiomysql.connection import AioMySQLConnection
+from asyncdb.exceptions import (
     Deadlock,
     DuplicateEntry,
     LockWaitTimeout,
@@ -14,10 +15,9 @@ from ..exceptions import (
     QueryTooBig,
     ServerGone,
 )
-from ..exceptions import (
+from asyncdb.exceptions import (
     SyntaxError as QuerySyntaxError,
 )
-from .connection import AioMySQLConnection
 
 
 def _query_error_factory(query: str, exc: Exception, conn: AioMySQLConnection) -> None:

@@ -363,10 +363,10 @@ async with factory.transaction() as trx:
 
 from logging import getLogger
 
-from .asyncdb import BoolResult, ObjectFetcher, Result, Transaction
-from .context import TransactionContext
-from .exceptions import EntityNotFound, LogicError, TooManyRowsError
-from .generics import ResultRow
+from asyncdb.asyncdb import BoolResult, ObjectFetcher, Result, Transaction
+from asyncdb.context import TransactionContext
+from asyncdb.exceptions import EntityNotFound, LogicError, TooManyRowsError
+from asyncdb.generics import ResultRow
 
 logger = getLogger("db")
 """Base logger for the database subsystem."""

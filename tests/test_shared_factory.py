@@ -164,7 +164,8 @@ async def test_callable_shared_factory(factory: SharedTransactionFactory, caplog
         assert await transaction.is_committed() is False
 
         assert await transaction.get_scalar("SELECT 2") == 2
-        await transaction.commit()
+        with pytest.warns(SharedRollback):
+            await transaction.commit()
 
     assert await shared_transaction.is_committed() is True
 

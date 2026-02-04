@@ -1,7 +1,14 @@
+from __future__ import annotations
+
 from collections.abc import Callable, MutableMapping, MutableSequence, MutableSet
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
+
+if TYPE_CHECKING:
+    from asyncdb.asyncdb.connection import ConnectionProtocol
+    from asyncdb.asyncdb.transaction import Transaction
+    from asyncdb.pool import ConnectionPool, DatabaseConnectionPool
 
 T = TypeVar("T")
 
@@ -38,4 +45,7 @@ class ResultRow:
 
 
 ResObjT = TypeVar("ResObjT", default=ResultRow, bound=object)
-ConnectionTypeT = TypeVar("ConnectionTypeT", default=Any)
+ConnectionTypeT = TypeVar("ConnectionTypeT", bound="ConnectionProtocol", default=Any)
+TransactionTypeT = TypeVar("TransactionTypeT", bound="Transaction", default=Any)
+ConnectionPoolT = TypeVar("ConnectionPoolT", bound="ConnectionPool")
+DatabaseConnectionPoolT = TypeVar("DatabaseConnectionPoolT", bound="DatabaseConnectionPool")

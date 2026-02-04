@@ -1,33 +1,29 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable, Collection
-from enum import Enum, StrEnum
-from functools import wraps
+from collections.abc import Collection
+from enum import StrEnum
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
+from typing import Any, Literal, Self
 from warnings import warn
 
 from aiomysql.connection import MySQLResult
-from tenacity import RetryCallState, retry, retry_any
 from tenacity.retry import RetryBaseT
 from tenacity.stop import StopBaseT
 from tenacity.wait import WaitBaseT
 from typing_extensions import deprecated
 
-from .._sl import _SL
-from .._sqlfactory_compat import ExecutableStatement
-from ..asyncdb import Transaction as AsyncTransactionBase
-from ..exceptions import ImplicitRollback, LogicError, SharedRollback
-from ..generics import ArgsT
-from .config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
-from .error import _query_error_factory
-from .observer import GenericTransactionObserver, ObserverContext, _TransactionQueryObserver
-from .observers.logging_observer import TransactionLoggingObserver
-from .result import BoolResult, Result
-
-if TYPE_CHECKING:
-    from .connection import AioMySQLConnection  # pragma: no cover
+from asyncdb._sl import _SL
+from asyncdb._sqlfactory_compat import ExecutableStatement
+from asyncdb.aiomysql.config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT
+from asyncdb.aiomysql.connection import AioMySQLConnection
+from asyncdb.aiomysql.error import _query_error_factory
+from asyncdb.aiomysql.result import BoolResult, Result
+from asyncdb.asyncdb.observer import GenericTransactionObserver, ObserverContext
+from asyncdb.asyncdb.transaction import Transaction as AsyncTransactionBase
+from asyncdb.exceptions import ImplicitRollback, LogicError
+from asyncdb.generics import ArgsT
+from asyncdb.types import SharedRollbackMode
 
 
 class TransactionIsolationLevel(StrEnum):
@@ -39,17 +35,7 @@ class TransactionIsolationLevel(StrEnum):
     SERIALIZABLE = "SERIALIZABLE"
 
 
-class SharedRollbackMode(Enum):
-    """Rollback mode for shared transactions."""
-
-    IGNORE = 0  # Ignore the rollback in shared transaction, commit the main transaction normally.
-    PROPAGATE = 1  # Propagate the rollback to the main transaction, causing it to rollback as well.
-    WARN = 2  # Propagate the rollback to the main transaction and emit warning.
-    RAISE = 3  # Propagate the rollback to the main transaction and raise `SharedRollback` exception.
-
-
-class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
-    # pylint: disable=too-many-instance-attributes, too-many-public-methods
+class Transaction(AsyncTransactionBase[AioMySQLConnection]):
     """
     Single database transaction. This is main access port to the database. By design, asyncdb enforces strong transaction
     usage for accessing the database. This is to prevent common mistakes by forgetting to commit transaction, which can lead to
@@ -80,13 +66,11 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
     >>> asyncio.run(main())
     """
 
-    __trx_id_counter__: ClassVar[int] = 0
-
     def __init__(
         self,
         connection: AioMySQLConnection,
         isolation_level: TransactionIsolationLevel | None = None,
-        observers: Collection[GenericTransactionObserver[Any, Any]] | None = None,
+        observers: Collection[GenericTransactionObserver[Any, Any, AioMySQLConnection, AsyncTransactionBase]] | None = None,
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
@@ -120,47 +104,23 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         :param retry_retry: Optional tenacity retry condition for deadlock retries.
         :param shared_rollback_mode: Rollback mode when rollback occurs in shared transaction.
         """
-        super().__init__(connection)
-
-        self._trx_id = Transaction.__trx_id_counter__ = Transaction.__trx_id_counter__ + 1
+        super().__init__(
+            connection,
+            observers,
+            retry_stop=retry_stop or DEFAULT_RETRY_STOP,
+            retry_wait=retry_wait or DEFAULT_RETRY_WAIT,
+            retry_retry=retry_retry or DEFAULT_RETRY,
+            shared_rollback_mode=shared_rollback_mode,
+        )
 
         self._isolation_level = isolation_level
         self._transaction_open = True
         self._transaction_initiated = False
         self._last_result: Result | None = None
 
-        self._retry_stop = retry_stop
-        self._retry_wait = retry_wait
-        self._retry_retry = retry_retry
-
         self._cursor_clean = True
 
         self._lastrowid: int = 0  # Result of last insert ID.
-
-        self.__shared_can_commit__: bool = True
-        self.__shared_mode__: SharedRollbackMode = shared_rollback_mode
-
-        self.observers: set[GenericTransactionObserver[Any, Any]] = set()
-        """Observers attached to the transaction."""
-
-        self.observer_context: dict[int, Any] = {}
-        """Context for passing data between observers. Accessed from the observer implementation, do not modify directly."""
-
-        self.connection_observer = _TransactionQueryObserver(self)
-        """Observer bound to connection, to pass callbacks to transaction observers."""
-
-        self.attach(TransactionLoggingObserver(logger=self.connection.logger))
-
-        if observers:
-            for observer in observers:
-                self.attach(observer)
-
-    @property
-    def trx_id(self) -> int:
-        """
-        Get unique transaction ID.
-        """
-        return self._trx_id
 
     async def __aenter__(self) -> Self:
         """
@@ -213,58 +173,6 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         """
         with _SL():
             return await super().__aexit__(exc_type, exc_val, exc_tb)
-
-    def attach(self, observer: GenericTransactionObserver[Any, Any]) -> None:
-        """
-        Attach observer to the transaction.
-
-        Example:
-
-        >>> import asyncio
-        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction, TransactionObserver
-        >>>
-        >>> class MyObserver(TransactionObserver):
-        >>>     def observe_transaction_start(self, transaction: Transaction, **kwargs):
-        >>>         print("Transaction started")
-        >>>
-        >>>     def observe_transaction_commit(self, transaction: Transaction, **kwargs):
-        >>>         print("Transaction committed")
-        >>>
-        >>>     def observe_transaction_rollback(self, transaction: Transaction, **kwargs):
-        >>>         print("Transaction rolled back")
-        >>>
-        >>>     def observe_transaction_end(self, transaction: Transaction, **kwargs):
-        >>>         print("Transaction ended")
-        >>>
-        >>>     def observe_query_before(self, transaction: Transaction, query: str, args: tuple[Any, ...], **kwargs):
-        >>>         print(f"Query: {query} with args {args}")
-        >>>
-        >>>     def observe_query_after(self, transaction: Transaction, result: Result, **kwargs):
-        >>>         print(f"Query executed with result {result}")
-        >>>
-        >>>
-        >>> connection: AioMySQLConnection = ...
-        >>> async def main():
-        >>>     trx = Transaction(connection)
-        >>>     trx.attach(MyObserver())
-        >>>     async with trx:
-        >>>         await trx.query("SELECT 1")
-        >>>         await trx.commit()
-        >>>
-        >>>     # Output:
-        >>>     # Transaction started
-        >>>     # Query: SELECT 1 with args ()
-        >>>     # Query executed with result <Result object at 0x7f5b0b5d6c10>
-        >>>     # Transaction committed
-        >>>     # Transaction ended
-        """
-        self.observers.add(observer)
-
-    def detach(self, observer: GenericTransactionObserver[Any, Any]) -> None:
-        """
-        Detach observer from the transaction.
-        """
-        self.observers.remove(observer)
 
     @property
     def isolation_level(self) -> TransactionIsolationLevel | None:
@@ -389,7 +297,7 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         await self._check_transaction_open("")
         return self._connection.affected_rows()
 
-    async def commit(self) -> None:
+    async def _actual_commit(self) -> None:
         """
         Commit transaction. After commit, no other operation can be performed on the transaction.
 
@@ -409,23 +317,6 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
         >>>
         >>> asyncio.run(main())
         """
-        if not self.__shared_can_commit__ and self.__shared_mode__ != SharedRollbackMode.IGNORE:
-            with _SL():
-                await self.rollback()
-
-                match self.__shared_mode__:
-                    case SharedRollbackMode.WARN:
-                        warn(
-                            "Shared transaction rollback propagated to main transaction.",
-                            SharedRollback,
-                            stacklevel=_SL.get() + 2,
-                        )
-
-                    case SharedRollbackMode.RAISE:
-                        raise SharedRollback("Shared transaction rollback propagated to main transaction.")
-
-            return
-
         with _SL(2):
             with ObserverContext() as ctx:
                 await self._check_transaction_open("COMMIT")
@@ -508,11 +399,6 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
 
         self._last_result = None
         self._cursor_clean = True
-
-    @property
-    def connection(self) -> AioMySQLConnection:
-        """Return connection associated with this transaction."""
-        return self._connection
 
     async def cleanup(self) -> None:
         """
@@ -763,122 +649,3 @@ class Transaction(AsyncTransactionBase["AioMySQLConnection"]):
             raise LogicError("", "Last query did not produce result. Unable to scroll.", remote_app=self.remote_app)
 
         await self._last_result.scroll(value, mode)
-
-    async def _observe_retry(self, retry_state: RetryCallState) -> None:
-        """
-        Observe the retry state and log it. This is called before each retry.
-
-        :param retry_state: Retry state.
-        """
-        # Stacklevel 4 is for Tenacity's internals (3) + retry decorator (1).
-        with _SL(4):
-            if not await self.is_committed():
-                warn("Rolling back uncommitted transaction.", ImplicitRollback, stacklevel=_SL.get())
-                await self.rollback()
-
-            with _SL(2):
-                for observer in self.observers:
-                    if isinstance(observer, GenericTransactionObserver):
-                        observer.observe_transaction_retry(self, self.observer_context.get(id(observer)), retry_state=retry_state)
-
-    async def _retry_reset_transaction(self, retry_state: RetryCallState) -> None:
-        """
-        Resets the transaction before retrying. This is called before each retry.
-
-        :param retry_state: Retry state.
-        """
-        # Don't reset anything on first attempt, the transaction shuld be clean.
-        if retry_state.attempt_number == 1:
-            return
-
-        with _SL(5):
-            await self.reset()
-
-    @overload
-    def retry(
-        self,
-        /,
-        func: Callable[..., Awaitable[Any]] | None = None,
-    ) -> Callable[..., Awaitable[Any]]: ...
-
-    @overload
-    def retry(
-        self,
-        /,
-        *,
-        retry_wait: WaitBaseT | None = None,
-        retry_stop: StopBaseT | None = None,
-        retry_retry: RetryBaseT | None = None,
-    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]: ...
-
-    def retry(
-        self,
-        /,
-        func: Callable[..., Awaitable[Any]] | None = None,
-        *,
-        retry_wait: WaitBaseT | None = None,
-        retry_stop: StopBaseT | None = None,
-        retry_retry: RetryBaseT | None = None,
-    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]] | Callable[..., Awaitable[Any]]:
-        """
-        Constructs decorator to decorate methods that should be retried in case of deadlock. Note that you must retry the whole
-        transaction, not just the query that caused the deadlock.
-
-        Usage:
-
-        >>> # Initialize transaction as usual
-        >>> async with Transaction() as trx:
-        >>>     @trx.retry  # @trx.deadlock_retry() works too.
-        >>>     async def retry_block():
-        >>>         # Transaction logic goes here.
-        >>>         await trx.query("SELECT 1")
-        >>>
-        >>>     await retry_block()
-
-        Optionally, you can pass retry strategies to customize the retry behavior:
-
-        >>> from tenacity import wait_fixed, stop_after_attempt
-        >>>
-        >>> async with Transaction() as trx:
-        >>>     @trx.retry(
-        >>>         retry_wait=wait_fixed(2),  # Wait 2 seconds between retries
-        >>>         retry_stop=stop_after_attempt(5)  # Stop after 5 attempts
-        >>>     )
-        >>>     async def retry_block():
-        >>>         # Transaction logic goes here.
-        >>>         await trx.query("SELECT 1")
-        >>>
-        >>>     await retry_block()
-
-        :param retry_wait: Wait strategy for retries. If None, uses Transaction's default.
-            See https://tenacity.readthedocs.io/en/latest/api.html#wait-functions for possible wait strategies.
-        :param retry_stop: Stop strategy for retries. If None, uses Transaction's default.
-            See https://tenacity.readthedocs.io/en/latest/api.html#stop-functions for possible stop strategies.
-        :param retry_retry: Retry strategy for retries. If None, uses Transaction's default.
-            Note that `Deadlock` is always retried. See https://tenacity.readthedocs.io/en/latest/api.html#retry-functions
-            for possible retry strategies.
-        :return: Function decorator to wrap the function to be retried, or decorated function if called without arguments.
-        """
-
-        if not retry_retry:
-            retry_retry = self._retry_retry
-
-        def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-            @retry(
-                retry=retry_any(DEFAULT_RETRY, retry_retry) if retry_retry else DEFAULT_RETRY,  # type: ignore[arg-type]
-                wait=retry_wait or self._retry_wait or DEFAULT_RETRY_WAIT,
-                stop=retry_stop or self._retry_stop or DEFAULT_RETRY_STOP,
-                reraise=True,
-                before=self._retry_reset_transaction,
-                before_sleep=self._observe_retry,
-            )
-            @wraps(func)
-            async def decorated(*args: Any, **kwargs: Any) -> Any:
-                return await func(*args, **kwargs)
-
-            return decorated
-
-        if func:
-            return decorator(func)
-
-        return decorator

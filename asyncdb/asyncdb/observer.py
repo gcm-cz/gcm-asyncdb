@@ -4,22 +4,22 @@ from abc import ABC
 from collections.abc import Collection
 from contextvars import ContextVar, Token
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self
 
 from tenacity import RetryCallState
+from typing_extensions import TypeVar
 
-from .._sl import _SL
+from asyncdb._sl import _SL
+from asyncdb.generics import ConnectionTypeT, TransactionTypeT
 
 if TYPE_CHECKING:
-    from .connection import AioMySQLConnection
-    from .transaction import Transaction
+    from asyncdb.asyncdb.transaction import Transaction
+
+QueryContextT = TypeVar("QueryContextT", default=Any)
+TransactionContextT = TypeVar("TransactionContextT", default=Any)
 
 
-QueryContextT = TypeVar("QueryContextT")
-TransactionContextT = TypeVar("TransactionContextT")
-
-
-class GenericQueryObserver(Generic[QueryContextT], ABC):
+class GenericQueryObserver(Generic[QueryContextT, ConnectionTypeT], ABC):
     """
     Abstract class for query observer. Implement this class to observe query execution. None of the methods actually needs
     to be overwritten, but you can override any of them to hook into any part of query execution process.
@@ -58,11 +58,11 @@ class GenericQueryObserver(Generic[QueryContextT], ABC):
     """
 
     def observe_query_before(
-        self, conn: AioMySQLConnection, query: str, *, query_pattern: str, query_args: Collection[Any], **kwargs: Any
+        self, conn: ConnectionTypeT, query: str, *, query_pattern: str, query_args: Collection[Any], **kwargs: Any
     ) -> QueryContextT:
         """
         Called before the query is sent to server for execution.
-        :param conn: MySQL connection that this query will be sent to.
+        :param conn: Connection that this query will be sent to.
         :param query: Query that will be executed, including all arguments already escaped and formatted.
         :param query_pattern: Original query without substituted placeholders.
         :param query_args: Arguments used to format the query.
@@ -72,7 +72,7 @@ class GenericQueryObserver(Generic[QueryContextT], ABC):
 
     def observe_query_after(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         context: QueryContextT,
         *,
@@ -92,7 +92,7 @@ class GenericQueryObserver(Generic[QueryContextT], ABC):
 
     def observe_query_error(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         error: BaseException,
         context: QueryContextT,
@@ -113,7 +113,7 @@ class GenericQueryObserver(Generic[QueryContextT], ABC):
         """
 
 
-class QueryObserver(GenericQueryObserver[Any], ABC):
+class QueryObserver(GenericQueryObserver[Any, Any], ABC):
     """
     Abstract class for query observer. Implement this class to observe query execution. None of the methods actually needs
     to be overwritten, but you can override any of them to hook into any part of query execution process.
@@ -122,7 +122,7 @@ class QueryObserver(GenericQueryObserver[Any], ABC):
     """
 
 
-class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT]):
+class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT, ConnectionTypeT, TransactionTypeT]):
     """
     Abstract class to observing transaction.
     Implement this class to observe transaction execution. None of the methods actually needs to be overwritten, but you can
@@ -177,7 +177,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
 
     def observe_query_before(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         trx_context: TransactionContextT,
         *,
@@ -198,7 +198,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
 
     def observe_query_after(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         context: QueryContextT,
         trx_context: TransactionContextT,
@@ -220,7 +220,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
 
     def observe_query_error(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         error: BaseException,
         context: QueryContextT,
@@ -242,7 +242,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
         :param kwargs: Additional kwargs passed to the query execution method.
         """
 
-    def observe_transaction_before(self, trx: Transaction, **kwargs: Any) -> TransactionContextT:
+    def observe_transaction_before(self, trx: TransactionTypeT, **kwargs: Any) -> TransactionContextT:
         """
         Called just before the transaction is started.
         :param trx: Transaction object that is being started.
@@ -251,7 +251,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
           transaction_rollback methods.
         """
 
-    def observe_transaction_start(self, trx: Transaction, **kwargs: Any) -> TransactionContextT:
+    def observe_transaction_start(self, trx: TransactionTypeT, **kwargs: Any) -> TransactionContextT:
         """
         Called when the transaction is started.
         :param trx: Transaction object that is being started.
@@ -261,7 +261,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
           is overwritten.
         """
 
-    def observe_transaction_end(self, trx: Transaction, context: TransactionContextT, **kwargs: Any) -> None:
+    def observe_transaction_end(self, trx: TransactionTypeT, context: TransactionContextT, **kwargs: Any) -> None:
         """
         Called when the transaction is ended either by commit or rollback.
         :param trx: Transaction object that is being ended.
@@ -269,7 +269,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
         :param kwargs: Additional kwargs passed to the transaction end method.
         """
 
-    def observe_transaction_commit(self, trx: Transaction, context: TransactionContextT, **kwargs: Any) -> None:
+    def observe_transaction_commit(self, trx: TransactionTypeT, context: TransactionContextT, **kwargs: Any) -> None:
         """
         Called when the transaction is committed.
         :param trx: Transaction object that is being committed.
@@ -277,7 +277,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
         :param kwargs: Additional kwargs passed to the transaction commit method.
         """
 
-    def observe_transaction_rollback(self, trx: Transaction, context: TransactionContextT, **kwargs: Any) -> None:
+    def observe_transaction_rollback(self, trx: TransactionTypeT, context: TransactionContextT, **kwargs: Any) -> None:
         """
         Called when the transaction is rolled back.
         :param trx: Transaction object that is being rolled back.
@@ -285,7 +285,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
         :param kwargs: Additional kwargs passed to the transaction rollback method.
         """
 
-    def observe_transaction_retry(self, trx: Transaction, context: TransactionContextT, retry_state: RetryCallState) -> None:
+    def observe_transaction_retry(self, trx: TransactionTypeT, context: TransactionContextT, retry_state: RetryCallState) -> None:
         """
         Called when the transaction is to be retried.
         :param trx: Transaction object that is being retried.
@@ -339,13 +339,13 @@ class ObserverContext:
         return {**existing_kwargs, **kwargs}
 
 
-class _QueryObserverContext(ObserverContext):
+class _QueryObserverContext(Generic[ConnectionTypeT], ObserverContext):
     """Context object for storing query observer state during query execution."""
 
-    query_ctx: ClassVar[ContextVar[_QueryObserverContext | None]] = ContextVar("_QueryObserverContext.ctx", default=None)
+    query_ctx: ClassVar[ContextVar[_QueryObserverContext[Any] | None]] = ContextVar("_QueryObserverContext.ctx", default=None)
 
     def __init__(
-        self, conn: AioMySQLConnection, query_pattern: str | None = None, query_args: Collection[Any] | None = None, **kwargs: Any
+        self, conn: ConnectionTypeT, query_pattern: str | None = None, query_args: Collection[Any] | None = None, **kwargs: Any
     ) -> None:
         super().__init__(**kwargs)
         self.conn = conn
@@ -402,13 +402,13 @@ class _QueryObserverContext(ObserverContext):
         self._query_args = value
 
 
-class _TransactionQueryObserver(QueryObserver):
+class _TransactionQueryObserver(Generic[ConnectionTypeT], GenericQueryObserver[dict[int, Any], ConnectionTypeT]):
     """Helper class that is used by Transaction to observe queries and pass them to transaction observers."""
 
-    def __init__(self, trx: Transaction) -> None:
+    def __init__(self, trx: Transaction[ConnectionTypeT]) -> None:
         self.trx = trx
 
-    def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs: Any) -> Any:
+    def observe_query_before(self, conn: ConnectionTypeT, query: str, **kwargs: Any) -> Any:
         observer_context: dict[int, Any] = {}
 
         with _SL():
@@ -419,16 +419,14 @@ class _TransactionQueryObserver(QueryObserver):
 
             return observer_context
 
-    def observe_query_after(self, conn: AioMySQLConnection, query: str, context: Any, **kwargs: Any) -> None:
+    def observe_query_after(self, conn: ConnectionTypeT, query: str, context: Any, **kwargs: Any) -> None:
         with _SL():
             for observer in self.trx.observers:
                 observer.observe_query_after(
                     conn, query, context.get(id(observer)), self.trx.observer_context.get(id(observer)), **kwargs
                 )
 
-    def observe_query_error(
-        self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, **kwargs: Any
-    ) -> None:
+    def observe_query_error(self, conn: ConnectionTypeT, query: str, error: BaseException, context: Any, **kwargs: Any) -> None:
         with _SL():
             for observer in self.trx.observers:
                 observer.observe_query_error(

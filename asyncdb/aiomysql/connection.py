@@ -3,20 +3,22 @@ from __future__ import annotations
 import datetime
 from asyncio import AbstractEventLoop
 from collections.abc import Callable, Collection
+from logging import Logger
 from ssl import SSLContext
-from typing import Any
+from typing import Any, Self
 
 import aiomysql
 from pymysql.constants import COMMAND, FIELD_TYPE
 from pymysql.converters import convert_datetime, decoders
 
-from .. import logger
-from .._sl import _SL
-from .observer import GenericQueryObserver, ObserverContext, _QueryObserverContext
-from .observers.logging_observer import LoggingObserver
+from asyncdb import logger
+from asyncdb._sl import _SL
+from asyncdb.asyncdb.connection import ConnectionProtocol
+from asyncdb.asyncdb.observer import GenericQueryObserver, ObserverContext, _QueryObserverContext
+from asyncdb.asyncdb.observers.logging_observer import LoggingObserver
 
 
-class AioMySQLConnection(aiomysql.Connection):
+class AioMySQLConnection(aiomysql.Connection, ConnectionProtocol):
     """
     Wrapper for aiomysql.Connection that allows observing queries, correctly sets timeouts, and provides timezone support.
 
@@ -112,7 +114,6 @@ class AioMySQLConnection(aiomysql.Connection):
         :param write_timeout: Timeout (in seconds) for sending data to MySQL server (default: None)
         :param wait_timeout: Timeout (in seconds) for closing the connection when idle. (default: None)
         """
-
         if conv is None:
             conv = decoders.copy()
 
@@ -179,20 +180,30 @@ class AioMySQLConnection(aiomysql.Connection):
         of datetimes returned in the result sets.
         """
 
-        self.logger = logger.getChild(f"mysql.{self.db}") if self.db else logger.getChild("mysql")
+        self._logger = logger.getChild(f"mysql.{self.db}") if self.db else logger.getChild("mysql")
         """Logger for this database."""
 
-        self.observers: set[GenericQueryObserver[Any]] = {LoggingObserver(self.logger)}
+        self.observers: set[GenericQueryObserver[Any, Self]] = {LoggingObserver(self.logger)}
         """Observers for this connection. By default, LoggingObserver is always present."""
 
-        self.remote_app = remote_app or f"{self._user}@{self._host}:{self._port}/{self._db}"
+        self._remote_app = remote_app or f"{self._user}@{self._host}:{self._port}/{self._db}"
         """Identifier of the connection. Used for logging and is populated to exceptions."""
 
-    def attach(self, observer: GenericQueryObserver[Any]) -> None:
+    @property
+    def logger(self) -> Logger:
+        """Get the logger associated with the connection."""
+        return self._logger
+
+    @property
+    def remote_app(self) -> str:
+        """Get the remote application identifier for the connection."""
+        return self._remote_app
+
+    def attach(self, observer: GenericQueryObserver[Any, Self]) -> None:
         """Attach new observer instance to the connection."""
         self.observers.add(observer)
 
-    def detach(self, observer: GenericQueryObserver[Any]) -> None:
+    def detach(self, observer: GenericQueryObserver[Any, Self]) -> None:
         """Detach observer instance from the connection."""
         self.observers.remove(observer)
 

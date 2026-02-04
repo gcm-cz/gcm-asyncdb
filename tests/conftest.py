@@ -4,7 +4,8 @@ from typing import Any
 
 import pytest
 
-from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, MySQLConnectionPool, QueryObserver, Transaction, TransactionFactory
+from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, MySQLConnectionPool, Transaction, TransactionFactory
+from asyncdb.asyncdb import QueryObserver
 
 
 @pytest.fixture

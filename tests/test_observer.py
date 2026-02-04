@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, QueryObserver, Transaction, TransactionFactory, TransactionObserver
+from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, Transaction, TransactionFactory
+from asyncdb.asyncdb import QueryObserver, TransactionObserver
 from asyncdb.exceptions import ImplicitRollback, ParseError
 
 

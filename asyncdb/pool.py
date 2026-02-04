@@ -17,17 +17,17 @@ from typing import (
     ClassVar,
     Generic,
     Self,
-    TypeVar,
     cast,
     overload,
 )
 
-from . import logger
-from ._sl import _SL
-from .asyncdb import Result, Transaction
-from .exceptions import UnableToCreateConnection
-from .generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow
-from .types import ObjectProxy
+from asyncdb import logger
+from asyncdb._sl import _SL
+from asyncdb.asyncdb import Result
+from asyncdb.asyncdb.connection import ConnectionProtocol
+from asyncdb.exceptions import UnableToCreateConnection
+from asyncdb.generics import OBJ, OBJ_OR_FACTORY, ConnectionPoolT, ConnectionTypeT, DictT, ListT, ResultRow, TransactionTypeT
+from asyncdb.types import ObjectProxy
 
 if TYPE_CHECKING:
     from prometheus_client import Gauge
@@ -50,7 +50,7 @@ class CountedConnection(Generic[ConnectionTypeT], ObjectProxy[ConnectionTypeT]):
 
         self.used: int = 0
         self.created: float = time()
-        self.current_transaction: Transaction[ConnectionTypeT] | None = None
+        self.current_transaction: Any = None
 
     def __repr__(self) -> str:
         """
@@ -60,19 +60,21 @@ class CountedConnection(Generic[ConnectionTypeT], ObjectProxy[ConnectionTypeT]):
         return f"{self.__wrapped__!r} used={self.used}, created={datetime.fromtimestamp(self.created)}"  # noqa: DTZ006
 
 
-class PooledTransaction(Generic[ConnectionTypeT], ObjectProxy[ConnectionTypeT]):
+class PooledTransaction(Generic[TransactionTypeT, ConnectionTypeT], ObjectProxy[TransactionTypeT]):
     """
     @private
 
     Helper class that is injected to each transaction to return transaction to the pool when not used anymore.
     """
 
-    def __init__(self, *args: Any, pool: ConnectionPool[ConnectionTypeT], **kwargs: Any) -> None:
+    def __init__(
+        self, actual_transaction: TransactionTypeT, pool: DatabaseConnectionPool[ConnectionTypeT, TransactionTypeT]
+    ) -> None:
         """
         :param connection: Connection for this transaction
         :param pool: Connection pool this transaction has been spinned from
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(actual_transaction)
         self.pool = pool
 
     async def __aenter__(self) -> Self:
@@ -167,10 +169,10 @@ class PooledTransaction(Generic[ConnectionTypeT], ObjectProxy[ConnectionTypeT]):
             result_fetcher: Callable[..., Callable[..., Awaitable[Any]]],
             query: str,
             args: Iterable[Any] | None,
-            cls: type[T] | Callable[..., T],
+            cls: type[ConnectionTypeT] | Callable[..., ConnectionTypeT],
             *cls_args: Any,
             **cls_kwargs: Any,
-        ) -> T:
+        ) -> ConnectionTypeT:
             # pylint: disable=unused-argument, no-self-use
             ...
 
@@ -733,9 +735,6 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         self.log.debug("Pool shutdown complete.")
 
 
-TransactionTypeT = TypeVar("TransactionTypeT", bound=Transaction[Any], default=Transaction[Any])
-
-
 class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], ConnectionPool[ConnectionTypeT]):
     """
     Connection pool for database connections.
@@ -785,7 +784,7 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         :return: Instance of transaction class.
         """
         conn = await asyncio.wait_for(self.get_conn(stacklevel + 1), timeout=timeout)
-        trans = PooledTransaction(self.transaction_class(conn, *args, **kwargs), pool=self)
+        trans = PooledTransaction(self.transaction_class(cast(ConnectionProtocol, conn), *args, **kwargs), pool=self)
         conn.current_transaction = cast(TransactionTypeT, trans)
 
         # PooledTransaction is not really a TransactionTypeT, but it is object wrapper that acts like it is. For better
@@ -794,26 +793,23 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
         return cast(TransactionTypeT, trans)
 
 
-T = TypeVar("T", bound=ConnectionPool[Any])
-
-
-class ConnectionPoolSingleton(Generic[T]):
+class ConnectionPoolSingleton(Generic[ConnectionPoolT]):
     """
     Just a basic singleton for connection pool.
     """
 
-    def __init__(self, cls: type[T], *args: Any, **kwargs: Any):
+    def __init__(self, cls: type[ConnectionPoolT], *args: Any, **kwargs: Any):
         """
         :param cls: Connection pool class
         :param args: Arguments to the connection pool constructor.
         :param kwargs: Keyword arguments to the connection pool constructor.
         """
-        self.cls: type[T] = cls
+        self.cls: type[ConnectionPoolT] = cls
         self.args = args
         self.kwargs = kwargs
-        self._instance: T | None = None
+        self._instance: ConnectionPoolT | None = None
 
-    def instance(self) -> T:
+    def instance(self) -> ConnectionPoolT:
         """
         Return instance of the connection pool. If there is none so far, it is created.
         :return: Connection pool instance.

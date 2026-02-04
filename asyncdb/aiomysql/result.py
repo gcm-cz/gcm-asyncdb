@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from aiomysql.connection import MySQLResult
 
-from ..asyncdb import BoolResult as BoolResultBase
-from ..asyncdb import Result as AsyncResultBase
-from ..exceptions import LogicError, ScrollIndexError
-from ..generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
+from asyncdb.asyncdb import BoolResult as BoolResultBase
+from asyncdb.asyncdb import Result as AsyncResultBase
+from asyncdb.exceptions import LogicError, ScrollIndexError
+from asyncdb.generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
 
 if TYPE_CHECKING:
-    from .transaction import Transaction  # pylint: disable=cyclic-import  # pragma: no cover
+    from asyncdb.aiomysql.transaction import Transaction  # pylint: disable=cyclic-import  # pragma: no cover
 
 
 class Result(AsyncResultBase):

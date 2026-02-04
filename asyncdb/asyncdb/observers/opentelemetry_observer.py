@@ -3,7 +3,9 @@ from typing import Any
 
 from opentelemetry.trace import Span, SpanKind, StatusCode, Tracer
 
-from asyncdb.aiomysql import AioMySQLConnection, GenericTransactionObserver, Transaction
+from asyncdb import Transaction
+from asyncdb.asyncdb.connection import ConnectionProtocol
+from asyncdb.asyncdb.observer import GenericTransactionObserver
 from asyncdb.exceptions import Error
 
 
@@ -20,14 +22,18 @@ class OpenTelemetryTransactionObserver(
 
     def observe_transaction_before(self, trx: Transaction, **kwargs: Any) -> tuple[AbstractContextManager[Span], Span]:
         """Start a span for the transaction."""
+        attributes: dict[str, Any] = {"db.namespace": trx.connection.db}
+
+        if trx.connection.host:
+            attributes["server.address"] = trx.connection.host
+
+        if trx.connection.port:
+            attributes["server.port"] = trx.connection.port
+
         context = self.tracer.start_as_current_span(
             name="sql_transaction",
             kind=SpanKind.CLIENT,
-            attributes={
-                "server.address": trx.connection.host,
-                "server.port": trx.connection.port,
-                "db.namespace": trx.connection.db,
-            },
+            attributes=attributes,
         )
         return context, context.__enter__()  # pylint: disable=unnecessary-dunder-call
 
@@ -54,7 +60,7 @@ class OpenTelemetryTransactionObserver(
 
     def observe_query_before(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionProtocol,
         query: str,
         trx_context: tuple[AbstractContextManager[Span], Span],
         *,
@@ -75,7 +81,7 @@ class OpenTelemetryTransactionObserver(
 
     def observe_query_after(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionProtocol,
         query: str,
         context: tuple[AbstractContextManager[Span], Span],
         trx_context: tuple[AbstractContextManager[Span], Span],
@@ -88,7 +94,7 @@ class OpenTelemetryTransactionObserver(
 
     def observe_query_error(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionProtocol,
         query: str,
         error: BaseException,
         context: tuple[AbstractContextManager[Span], Span],

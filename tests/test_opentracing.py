@@ -9,8 +9,8 @@ from opentracing.mocktracer.span import MockSpan
 from opentracing.scope_managers.asyncio import AsyncioScopeManager
 
 from asyncdb.aiomysql import MySQLConfig, TransactionFactory
-from asyncdb.aiomysql.observers.opentracing_observer import OpentracingObserver
-from asyncdb.exceptions import QueryError
+from asyncdb.asyncdb.observers.opentracing_observer import OpentracingObserver
+from asyncdb.exceptions import ImplicitRollback, QueryError
 
 
 @pytest.fixture
@@ -49,8 +49,9 @@ async def test_opentracing(factory: TransactionFactory, tracer: MockTracer) -> N
         await trx.rollback()
 
     with pytest.raises(QueryError):
-        async with factory.transaction() as trx:
-            await trx.query("PARSE ERROR")
+        with pytest.warns(ImplicitRollback):
+            async with factory.transaction() as trx:
+                await trx.query("PARSE ERROR")
 
     spans: list[MockSpan] = tracer.finished_spans()
 

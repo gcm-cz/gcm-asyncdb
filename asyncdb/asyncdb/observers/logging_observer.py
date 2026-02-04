@@ -4,19 +4,16 @@ import contextlib
 import logging
 from contextvars import ContextVar
 from time import time
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar, Generic
 
 from tenacity import RetryCallState
 
 from asyncdb._sl import _SL
-from asyncdb.aiomysql.observer import QueryObserver, TransactionObserver
-
-if TYPE_CHECKING:  # pragma: no cover
-    from asyncdb.aiomysql.connection import AioMySQLConnection
-    from asyncdb.aiomysql.transaction import Transaction
+from asyncdb.asyncdb.observer import GenericQueryObserver, GenericTransactionObserver
+from asyncdb.generics import ConnectionTypeT, TransactionTypeT
 
 
-class LoggingObserver(QueryObserver):
+class LoggingObserver(Generic[ConnectionTypeT], GenericQueryObserver[float, ConnectionTypeT]):
     """
     Observer that logs all queries to the logger.
     """
@@ -28,7 +25,7 @@ class LoggingObserver(QueryObserver):
         self.logger = logger
 
     def observe_query_before(
-        self, conn: AioMySQLConnection, query: str, *, logger: logging.Logger | None = None, stacklevel: int = 0, **kwargs: Any
+        self, conn: ConnectionTypeT, query: str, *, logger: logging.Logger | None = None, stacklevel: int = 0, **kwargs: Any
     ) -> float:
         """Log start of query execution."""
         trx_id = TransactionLoggingObserver.trx_id.get()
@@ -40,7 +37,7 @@ class LoggingObserver(QueryObserver):
 
     def observe_query_after(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         context: float,
         *,
@@ -53,7 +50,7 @@ class LoggingObserver(QueryObserver):
 
     def observe_query_error(
         self,
-        conn: AioMySQLConnection,
+        conn: ConnectionTypeT,
         query: str,
         error: BaseException,
         context: float,
@@ -66,7 +63,9 @@ class LoggingObserver(QueryObserver):
         (logger or self.logger).debug("Took %1.4fs: %s", time() - context, str(error), stacklevel=_SL.get() + stacklevel)
 
 
-class TransactionLoggingObserver(TransactionObserver):
+class TransactionLoggingObserver(
+    Generic[ConnectionTypeT, TransactionTypeT], GenericTransactionObserver[int | None, None, ConnectionTypeT, TransactionTypeT]
+):
     """
     Observer that logs transaction-related events.
     """
@@ -79,11 +78,11 @@ class TransactionLoggingObserver(TransactionObserver):
         """
         self.logger = logger
 
-    def observe_transaction_before(self, trx: Transaction, **kwargs: Any) -> Any:
+    def observe_transaction_before(self, trx: TransactionTypeT, **kwargs: Any) -> Any:
         """Store transaction ID before starting."""
         return self.__class__.trx_id.set(trx.trx_id)
 
-    def observe_transaction_retry(self, trx: Transaction, context: Any, retry_state: RetryCallState) -> None:
+    def observe_transaction_retry(self, trx: TransactionTypeT, context: Any, retry_state: RetryCallState) -> None:
         """Log retry attempt."""
 
         self.logger.warning(
@@ -94,7 +93,7 @@ class TransactionLoggingObserver(TransactionObserver):
             stacklevel=_SL.get(),
         )
 
-    def observe_transaction_end(self, trx: Transaction, context: Any, **kwargs: Any) -> None:
+    def observe_transaction_end(self, trx: TransactionTypeT, context: Any, **kwargs: Any) -> None:
         """Restore transaction ID at the end."""
         with contextlib.suppress(ValueError):
             self.__class__.trx_id.reset(context)
