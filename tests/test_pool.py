@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from asyncdb.aiomysql import MySQLConfig, MySQLConnectionPool, Transaction
-from asyncdb.exceptions import QueryError, LostConnection, ImplicitRollback
+from asyncdb.exceptions import ImplicitRollback, LostConnection, QueryError
 
 
 def test_pool_init_errors():

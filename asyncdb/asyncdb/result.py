@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, MutableSequence, MutableSet
 from typing import Any, cast, overload
 
-from asyncdb.generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
+from asyncdb.generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT, _accepts_kwargs
 
 
 class Result(ABC):
@@ -283,7 +283,8 @@ class Result(ABC):
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
-          will be set directly using setattr().
+          will be set directly using setattr(). If not specified, defaults to True if cls is dataclass or pydantic model,
+          False otherwise.
         :param kwargs: Optional kwargs for the constructor.
         :return: Instance of cls created from result row or None if no rows are remaining in the result set.
         """
@@ -325,7 +326,8 @@ class Result(ABC):
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
-          will be set directly using setattr().
+          will be set directly using setattr(). If not specified, defaults to True if cls is dataclass or pydantic model,
+          False otherwise.
         :param kwargs: Optional kwargs for the constructor.
         :return: Instance of cls created from result row or None if no rows are remaining in the result set.
         """
@@ -343,7 +345,7 @@ class Result(ABC):
             yield row
 
     @overload
-    def fetch_all_object(self, /, *, as_kwargs: bool = False) -> AsyncGenerator[ResultRow, None]:
+    def fetch_all_object(self, /) -> AsyncGenerator[ResultRow, None]:
         """
         Generate objects of type `ResultRow` for each row of the result set.
 
@@ -369,7 +371,7 @@ class Result(ABC):
 
     @overload
     def fetch_all_object(
-        self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+        self, cls: OBJ_OR_FACTORY[OBJ], /, *args: Any, as_kwargs: bool | None = None, **kwargs: Any
     ) -> AsyncGenerator[OBJ, None]:
         """
         Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
@@ -401,13 +403,14 @@ class Result(ABC):
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
-          will be set directly using setattr().
+          will be set directly using setattr(). If not specified, defaults to True if cls is dataclass or pydantic model,
+          False otherwise.
         :param kwargs: Optional kwargs for the constructor.
         :return: Generator generating result rows as objects of specified type.
         """
 
     async def fetch_all_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = False, **kwargs: Any
+        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool | None = None, **kwargs: Any
     ) -> AsyncGenerator[ResultRow | OBJ, None]:
         """
         Generate objects of type specified by the `cls` for each row of the result set, with optionally passing args and kwargs
@@ -439,10 +442,14 @@ class Result(ABC):
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
-          will be set directly using setattr().
+          will be set directly using setattr(). If not specified, defaults to True if cls is dataclass or pydantic model,
+          False otherwise.
         :param kwargs: Optional kwargs for the constructor.
         :return: Generator generating result rows as objects of specified type.
         """
+        if as_kwargs is None:
+            as_kwargs = _accepts_kwargs(cls)
+
         async for row in self._fetch_all(self.fetch_object, cls, *args, as_kwargs=as_kwargs, **kwargs):
             yield cast(OBJ, row)
 

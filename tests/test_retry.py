@@ -1,5 +1,3 @@
-import warnings
-from contextlib import contextmanager
 
 import pytest
 from pymysql.constants import ER

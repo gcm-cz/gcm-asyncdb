@@ -1,12 +1,13 @@
-import asyncio
 import os
 import warnings
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, AsyncGenerator
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import pytest
 from dateutil import tz
+from pydantic import BaseModel
 
 from asyncdb import LogicError, ObjectFetcher, ResultRow
 from asyncdb.aiomysql import (
@@ -218,7 +219,7 @@ async def test_aware_datetime(connection: AioMySQLConnection) -> None:
         assert dt.hour == 13
         assert dt.minute == 15
         assert dt.second == 16
-        assert dt.tzinfo is timezone.utc
+        assert dt.tzinfo is UTC
 
         await transaction.commit()
 
@@ -229,7 +230,7 @@ async def test_aware_datetime_different_tz(connection: AioMySQLConnection) -> No
         dt = datetime(2021, 1, 3, 13, 15, 16, tzinfo=tz.gettz("US/Eastern"))  # UTC-5
 
         # Ensure the timezone of connection is UTC.
-        assert transaction.connection.timezone == timezone.utc
+        assert transaction.connection.timezone == UTC
 
         await transaction.query("CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `ts` TIMESTAMP, `d` DATE, `t` TIME)")
         await transaction.query(
@@ -244,15 +245,15 @@ async def test_aware_datetime_different_tz(connection: AioMySQLConnection) -> No
 
         # Try to fetch the date back.
         fetched_dt: datetime = await transaction.get_scalar("SELECT `dt` FROM `test`")
-        assert fetched_dt == dt.astimezone(timezone.utc)
-        assert fetched_dt.tzinfo == timezone.utc
+        assert fetched_dt == dt.astimezone(UTC)
+        assert fetched_dt.tzinfo == UTC
 
         fetched_dt = await transaction.get_scalar("SELECT `ts` FROM `test`")
-        assert fetched_dt == dt.astimezone(timezone.utc)
-        assert fetched_dt.tzinfo == timezone.utc
+        assert fetched_dt == dt.astimezone(UTC)
+        assert fetched_dt.tzinfo == UTC
 
         fetched_d: date = await transaction.get_scalar("SELECT `d` FROM `test`")
-        assert fetched_d == dt.astimezone(timezone.utc).date()
+        assert fetched_d == dt.astimezone(UTC).date()
 
         fetched_t: timedelta = await transaction.get_scalar("SELECT `t` FROM `test`")
         assert fetched_t.seconds == dt.hour * 3600 + dt.minute * 60 + dt.second
@@ -263,7 +264,7 @@ async def test_aware_datetime_different_tz(connection: AioMySQLConnection) -> No
 @pytest.mark.asyncio
 async def test_datetime_ms(connection: AioMySQLConnection) -> None:
     async with Transaction(connection, isolation_level=TransactionIsolationLevel.READ_COMMITTED) as transaction:
-        dt = datetime(2021, 1, 3, 13, 15, 16, 123456, tzinfo=timezone.utc)
+        dt = datetime(2021, 1, 3, 13, 15, 16, 123456, tzinfo=UTC)
         await transaction.query(
             "CREATE TEMPORARY TABLE `test` (`dt` DATETIME, `dt_ms` DATETIME(6), `ts` TIMESTAMP, `ts_ms` TIMESTAMP(6))"
         )
@@ -437,6 +438,26 @@ async def test_fetch_custom_object(connection: AioMySQLConnection) -> None:
     assert rows[0].a == 1
     assert rows[1].a == 2
     assert rows[2].a == 3
+
+
+class CustomModel(BaseModel):
+    a: int
+
+
+@pytest.mark.asyncio
+async def test_fetch_object_auto_kwargs(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row1 in q.fetch_all_object(customobject):
+            assert isinstance(row1, customobject)
+            assert row1.a in (1, 2, 3)
+
+        q = await trx.query("SELECT 1 AS 'a' UNION ALL SELECT 2 AS 'a' UNION ALL SELECT 3 AS 'a'")
+        async for row2 in q.fetch_all_object(CustomModel):
+            assert isinstance(row2, CustomModel)
+            assert row2.a in (1, 2, 3)
+
+        await trx.commit()
 
 
 @pytest.mark.asyncio

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, MutableMapping, MutableSequence, MutableSet
+from dataclasses import is_dataclass
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
+
+from asyncdb._pydantic_compat import HAVE_PYDANTIC, BaseModel
 
 if TYPE_CHECKING:
     from asyncdb.asyncdb.connection import ConnectionProtocol
@@ -49,3 +53,22 @@ ConnectionTypeT = TypeVar("ConnectionTypeT", bound="ConnectionProtocol", default
 TransactionTypeT = TypeVar("TransactionTypeT", bound="Transaction", default=Any)
 ConnectionPoolT = TypeVar("ConnectionPoolT", bound="ConnectionPool")
 DatabaseConnectionPoolT = TypeVar("DatabaseConnectionPoolT", bound="DatabaseConnectionPool")
+
+
+def _accepts_kwargs(cls: Any) -> bool:
+    """
+    Utility function to determine value for `as_kwargs` parameter if `fetch_object` method of transaction.
+
+    Currently, it returns True for dataclasses and Pydantic models, if pydantic is available.
+
+    :param cls: Class to check.
+    :return: True if class constructor accepts kwargs, False otherwise.
+    """
+
+    if not inspect.isclass(cls):
+        return False
+
+    if is_dataclass(cls) or (HAVE_PYDANTIC and issubclass(cls, BaseModel)):
+        return True
+
+    return False

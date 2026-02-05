@@ -3,17 +3,38 @@
 This library provides better, more robust database API with strong enforcement of transaction logic when working with
 relational databases.
 
-Currently, only MySQL (aiomysql) is supported, but support for other databases should be easy to implement, when required.
+Currently, only MySQL/MariaDB (aiomysql) is supported, but support for other databases should be easy to implement, when required.
 
 ## Documentation
 
 API documentation is available at https://gcm-cz.gitlab.io/gcm-asyncdb
+
+## Features
+
+- Fully type-safe, based on modern Python.
+- Fully async.
+- Connection pool with health checking and metrics.
+- Strong transaction usage enforcement, automatic rollback.
+- Advanced result fetching methods to simplify the usage.
+- Observer support for transaction and query events.
+- Structured logging with various loggers for various tasks, per-database logger, correct stack level.
+- Exception hierarchy for correct and easier error handling.
+- Timezone-aware datetimes (with possible fallback to naive datetimes).
+- Native support for [sqlfactory](https://gitlab.com/gcm-cz/sqlfactory) statements.
+- OpenTracing and OpenTelemetry support.
 
 ## Installation
 
 ```bash
 pip install gcm-asyncdb
 ```
+
+### Extras
+
+- `opentracing` - for OpenTracing support
+- `opentelemetry` - for OpenTelemetry support
+- `sqlfactory` - for sqlfactory statement support
+- `pydantic` - for pydantic model support in `fetch_object` calls.
 
 ## Usage
 
@@ -25,6 +46,7 @@ db = TransactionFactory(MySQLConfig(
     user='root',
     database='test'
 ))
+
 
 async def main():
     async with db.transaction() as t:

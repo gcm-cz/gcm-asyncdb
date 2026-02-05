@@ -9,7 +9,7 @@ from aiomysql.connection import MySQLResult
 from asyncdb.asyncdb import BoolResult as BoolResultBase
 from asyncdb.asyncdb import Result as AsyncResultBase
 from asyncdb.exceptions import LogicError, ScrollIndexError
-from asyncdb.generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT
+from asyncdb.generics import OBJ, OBJ_OR_FACTORY, DictT, ListT, ResultRow, SetT, _accepts_kwargs
 
 if TYPE_CHECKING:
     from asyncdb.aiomysql.transaction import Transaction  # pylint: disable=cyclic-import  # pragma: no cover
@@ -417,13 +417,14 @@ class Result(AsyncResultBase):
         :param cls: Class representing the object that should be returned or factory making one.
         :param args: Arguments to the cls constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
-          will be set directly using setattr().
+          will be set directly using setattr(). If not specified, defaults to True if cls is dataclass or pydantic model,
+          False otherwise.
         :param kwargs: Optional kwargs for the constructor.
         :return: Instance of cls created from result row or None if no rows are remaining in the result set.
         """
 
     async def fetch_object(
-        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool = True, **kwargs: Any
+        self, cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow, /, *args: Any, as_kwargs: bool | None = None, **kwargs: Any
     ) -> OBJ | ResultRow | None:
         """
         Fetch one row from result as object of type specified by the cls argument. Defaults to generic `ResultRow` object.
@@ -459,7 +460,8 @@ class Result(AsyncResultBase):
         :param cls: Class (or factory) representing the object that should be returned.
         :param args: Arguments to the `cls` constructor.
         :param as_kwargs: Should the row attributes be passed as kwargs to the constructor? If False, properties
-          will be set directly using setattr().
+          will be set directly using setattr(). If not specified, defaults to True if cls is dataclass or pydantic model,
+          False otherwise.
         :param kwargs: Optional kwargs for the constructor.
         :return: Instance of cls created from result row or None if no rows are remaining in the result set.
         """
@@ -468,6 +470,9 @@ class Result(AsyncResultBase):
             return None
 
         my_kwargs = copy(kwargs)
+
+        if as_kwargs is None:
+            as_kwargs = _accepts_kwargs(cls)
 
         if as_kwargs:
             for idx, column in enumerate(self.description):
