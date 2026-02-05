@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -27,7 +29,7 @@ from asyncdb.asyncdb.observers.logging_observer import TransactionLoggingObserve
 from asyncdb.asyncdb.result import Result
 from asyncdb.exceptions import EntityNotFound, ImplicitRollback, LogicError, SharedRollback, TooManyRowsError
 from asyncdb.generics import OBJ, OBJ_OR_FACTORY, ConnectionTypeT, DictT, ListT, ResultRow, T
-from asyncdb.types import SharedRollbackMode
+from asyncdb.types import SharedRollbackMode, _default, _DefaultPlaceholder
 
 
 class Transaction(ABC, Generic[ConnectionTypeT]):
@@ -386,6 +388,28 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         *cls_args: Any,
         **cls_kwargs: Any,
     ) -> T:
+        if isinstance(query, ExecutableStatement) and args is not None:
+            # When sqlfactory statement is used, the call looks like
+            # _get(..., query=Statement, args=Factory, cls=first_arg, *cls_args, **cls_kwargs)
+
+            if not isinstance(cls, _DefaultPlaceholder):
+                # Shift cls to cls_args.
+                cls_args = [cls, *cls_args]  # type: ignore
+            else:
+                # Extract the value from default placeholder, because it contains the type which should be instantiated.
+                cls = cls.value  # type: ignore
+
+            if not isinstance(args, _DefaultPlaceholder):
+                cls = args  # type: ignore
+
+            args = None
+        else:
+            if isinstance(cls, _DefaultPlaceholder):
+                cls = cls.value  # type: ignore
+
+            if isinstance(args, _DefaultPlaceholder):
+                args = args.value  # type: ignore
+
         with _SL():
             if isinstance(query, ExecutableStatement):
                 res = await self.query(query)
@@ -547,7 +571,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         cls: Callable[..., OBJ] = ...,
         /,
         *cls_args: Any,
-        as_kwargs: bool = False,
+        as_kwargs: bool | None = None,
         **cls_kwargs: Any,
     ) -> OBJ:
         """
@@ -598,7 +622,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         cls: Callable[..., OBJ] = ...,
         /,
         *cls_args: Any,
-        as_kwargs: bool = False,
+        as_kwargs: bool | None = None,
         **cls_kwargs: Any,
     ) -> OBJ:
         """
@@ -645,11 +669,11 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_object(
         self,
         query: str | ExecutableStatement,
-        args: Iterable[Any] | None | OBJ_OR_FACTORY[OBJ] | type[ResultRow] = None,
-        cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = ResultRow,
+        args: Iterable[Any] | None | OBJ_OR_FACTORY[OBJ] | type[ResultRow] = _default(None),  # noqa: B008
+        cls: OBJ_OR_FACTORY[OBJ] | type[ResultRow] = _default(ResultRow),  # noqa: B008
         /,
         *cls_args: Any,
-        as_kwargs: bool = False,
+        as_kwargs: bool | None = None,
         **cls_kwargs: Any,
     ) -> OBJ | ResultRow:
         """
@@ -712,8 +736,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_dict(
         self,
         query: str | ExecutableStatement,
-        args: Iterable[Any] | None | type[DictT | dict[str, Any]] = None,
-        cls: type[DictT | dict[str, Any]] = dict,
+        args: Iterable[Any] | None | type[DictT | dict[str, Any]] = _default(None),  # noqa: B008
+        cls: type[DictT | dict[str, Any]] = _default(dict[str, Any]),  # noqa: B008
         /,
         *cls_args: Any,
         **cls_kwargs: Any,
@@ -767,8 +791,8 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
     async def get_list(
         self,
         query: str | ExecutableStatement,
-        args: Iterable[Any] | None | type[ListT | list[Any]] = None,
-        cls: type[ListT | list[Any]] = list,
+        args: Iterable[Any] | None | type[ListT | list[Any]] = _default(None),  # noqa: B008
+        cls: type[ListT | list[Any]] = _default(list),  # noqa: B008
         /,
         *cls_args: Any,
         **cls_kwargs: Any,

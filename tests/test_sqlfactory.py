@@ -1,4 +1,5 @@
 import warnings
+from collections import UserDict, UserList
 from dataclasses import dataclass
 from typing import Any
 
@@ -121,6 +122,29 @@ async def test_fetching_dict_custom(connection: AioMySQLConnection) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_dict(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        result = await trx.get_dict(
+            Select(Aliased(Value(1), alias="a"), Aliased(Value(2), alias="b"), Aliased(Value(3), alias="c"))
+        )
+        await trx.commit()
+
+    assert result == {"a": 1, "b": 2, "c": 3}
+
+
+@pytest.mark.asyncio
+async def test_get_dict_custom(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        result = await trx.get_dict(
+            Select(Aliased(Value(1), alias="a"), Aliased(Value(2), alias="b"), Aliased(Value(3), alias="c")), CustomDict
+        )
+        await trx.commit()
+
+    assert isinstance(result, CustomDict)
+    assert result == {"a": 1, "b": 2, "c": 3}
+
+
+@pytest.mark.asyncio
 async def test_fetch_list(connection: AioMySQLConnection) -> None:
     rows: list[list[Any]] = []
     async with Transaction(connection) as trx:
@@ -158,6 +182,33 @@ async def test_fetch_list_custom(connection: AioMySQLConnection) -> None:
         await trx.commit()
 
     assert rows == [[1], [2], [3]]
+
+
+@pytest.mark.asyncio
+async def test_get_list(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        result = await trx.get_list(
+            Select(Aliased(Value(1), alias="a"), Aliased(Value(2), alias="b"), Aliased(Value(3), alias="c"))
+        )
+        await trx.commit()
+
+    assert result == [1, 2, 3]
+
+
+class CustomList(UserList):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_get_list_custom(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        result = await trx.get_list(
+            Select(Aliased(Value(1), alias="a"), Aliased(Value(2), alias="b"), Aliased(Value(3), alias="c")), CustomList
+        )
+        await trx.commit()
+
+    assert isinstance(result, CustomList)
+    assert result == [1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -213,6 +264,24 @@ async def test_fetch_custom_object(connection: AioMySQLConnection) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_object(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        row = await trx.get_object(Select(Aliased(Value(1), alias="a")))
+        assert isinstance(row, ResultRow)
+        assert row.a == 1
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_get_object_custom(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        row = await trx.get_object(Select(Aliased(Value(1), alias="a")), CustomObject)
+        assert isinstance(row, CustomObject)
+        assert row.a == 1
+        await trx.commit()
+
+
+@pytest.mark.asyncio
 async def test_fetch_scalar(connection: AioMySQLConnection) -> None:
     async with Transaction(connection) as trx:
         q = await trx.query(
@@ -234,4 +303,12 @@ async def test_fetch_scalar_multiple_columns(connection: AioMySQLConnection) -> 
         with pytest.raises(LogicError):
             await q.fetch_all_scalar()
 
+        await trx.commit()
+
+
+@pytest.mark.asyncio
+async def test_get_scalar(connection: AioMySQLConnection) -> None:
+    async with Transaction(connection) as trx:
+        value = await trx.get_scalar(Select(Aliased(Value(42), alias="answer")))
+        assert value == 42
         await trx.commit()

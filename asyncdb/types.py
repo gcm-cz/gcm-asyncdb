@@ -1,6 +1,6 @@
 from abc import ABC
 from enum import Enum
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 try:
     from wrapt import BaseObjectProxy
@@ -31,3 +31,38 @@ class SharedRollbackMode(Enum):
     PROPAGATE = 1  # Propagate the rollback to the main transaction, causing it to rollback as well.
     WARN = 2  # Propagate the rollback to the main transaction and emit warning.
     RAISE = 3  # Propagate the rollback to the main transaction and raise `SharedRollback` exception.
+
+
+class _DefaultPlaceholder:
+    """
+    Taken from FastAPI, licenced under MIT.
+
+    You shouldn't use this class directly.
+
+    It's used internally to recognize when a default value has been overwritten, even
+    if the overridden default value was truthy.
+    """
+
+    def __init__(self, value: Any):
+        self.value = value
+
+    def __bool__(self) -> bool:
+        return bool(self.value)
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, _DefaultPlaceholder) and o.value == self.value
+
+
+DefaultT = TypeVar("DefaultT")
+
+
+def _default(value: DefaultT) -> DefaultT:
+    """
+    Taken from FastAPI, licenced under MIT.
+
+    You shouldn't use this function directly.
+
+    It's used internally to recognize when a default value has been overwritten, even
+    if the overridden default value was truthy.
+    """
+    return _DefaultPlaceholder(value)  # type: ignore
