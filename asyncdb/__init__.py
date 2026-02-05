@@ -359,6 +359,124 @@ async with factory.transaction() as trx:
     await retry_block()
 ```
 
+## Observability
+
+The library supports OpenTracing and OpenTelemetry for tracing database queries and transactions. You can use built-in
+observers for both tracing systems.
+
+```python
+from asyncdb.asyncdb.observers import OpenTelemetryObserver
+from asyncdb.aiomysql import TransactionFactory
+
+from opentelemetry import trace
+
+factory = TransactionFactory(..., transaction_observers=[OpenTelemetryObserver(trace.get_tracer(...))])
+```
+
+## Transaction sharing
+
+There are architectures, that tries to decouple interfaces from business logic and other interfaces (such as hexagonal
+architecture). In such architectures, it is often required to share the transaction context between various services without
+actually passing the transaction object around, as the database transaction is not in the generic interface between core logic
+and external interfaces.
+
+Asyncdb has built-in support for sharing active transaction using context variables.
+
+```python
+
+# Use SharedTransactionFactory instead of TransactionFactory to enable transaction sharing support.
+from asyncdb.aiomysql import SharedTransactionFactory
+
+factory = SharedTransactionFactory(...)
+
+# Generic interface specifying ability to store entity to some storage.
+class EntityInterface(Protocol):
+    async def store(entity: object) -> None:
+        raise NotImplementedError
+
+
+# Generic interface specifying ability to log audit actions.
+class AuditInterface(Protocol):
+    async def log_action(action: str, attributes: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+
+# Concrete implementation of EntityInterface storing entity to database.
+class DatabaseRepository(EntityInterface):
+    async def store(entity: object) -> None:
+        # Take shared transaction, if possible. If shared transaction is not available, new transaction is created.
+        async with factory.transaction(shared=True) as trx:
+            await trx.query("INSERT INTO ...")
+
+            # As we cannot be sure whether the transaction is shared or not, we need to commit it here. Has no effect if the
+            # transaction is shared.
+            await trx.commit()
+
+
+# Concrete implementation of AuditInterface storing audit records in the database.
+class DatabaseAudit(AuditInterface):
+    async def log_action(action: str, attributes: dict[str, Any]) -> None:
+        # Use the same transaction as for storing entity, if available.
+        async with factory.transaction(shared=True) as trx:
+            await trx.query("INSERT INTO audit_log (action, attributes) VALUES (%s, %s)", action, json.dumps(attributes))
+            await trx.commit()  # Again, do not forget to commit. Has no effect if the transaction is shared.
+
+
+# Business logic function storing entity and logging audit record.
+class EntityService:
+    def __init__(self, interface: EntityInterface, audit: AuditInterface) -> None:
+        self._interface = interface
+        self._audit = audit
+
+    async def store_entity(
+    entity: object,
+    ) -> None:
+        async with factory.transaction() as trx:
+            await self._interface.store(entity)  # Uses `trx` as transaction, utilizing transaction sharing.
+            await self._audit.log_action("created", entity.__dict__)  # Uses `trx` as transaction, utilizing transaction sharing.
+            await trx.commit()  # Commit the whole transaction.
+
+
+service = EntityService(
+    interface=DatabaseRepository(),
+    audit=DatabaseAudit(),
+)
+
+await service.store_entity(...)
+```
+
+### Rollback in shared context
+
+The happy-path when all shared transactions commits is easy, as described in the example above. However, when one of the shared
+transaction blocks needs to rollback, what should be the behavior of the whole shared transaction? There is no one-size-fits-all
+answer to this question, so asyncdb supports four modes of operation.
+
+You can specify the rollback behavior globally when creating the `SharedTransactionFactory` using the `shared_rollback_mode`
+attribute and using the same attribute when acquiring shared transaction using `SharedTransactionFactory.transaction()` method
+for transaction-specific behavior.
+
+- `SharedRollbackMode.IGNORE` - any rollback of shared transaction block is ignored, the main transaction is committed normally.
+- `SharedRollbackMode.PROPAGATE` - any rollback of shared transaction block causes the main transaction to rollback as well, even
+    if `commit()` is called on the main transaction.
+- `SharedRollbackMode.WARN` - Same as PROPAGATE, but issues an `SharedRollback` warning (this is the default behavior).
+- `SharedRollbackMode.RAISE` - Same as PROPAGATE, but raises `SharedRollback` exception when the main transaction is being
+    committed.
+
+Example demonstrating the behavior:
+
+```python
+
+factory = SharedTransactionFactory(..., shared_rollback_mode=SharedRollbackMode.WARN)
+
+async with factory.transaction() as trx:
+    async with factory.transaction(shared=True) as shared_trx:
+        # Do some work...
+        await shared_trx.rollback()  # Marks the whole transaction for rollback.
+
+    # When committing the main transaction, it is rolled back instead, warning is issued.
+    await trx.commit()  # Transaction is rolled back, warning is issued.
+```
+
 """
 
 from logging import getLogger
