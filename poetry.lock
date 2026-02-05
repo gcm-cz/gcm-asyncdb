@@ -1671,4 +1671,4 @@ sqlfactory = ["sqlfactory"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "8bdd8e654968f4645201b195b979946dcd7d9b6799e04acdec04375bf8153539"
+content-hash = "a50163f5ad0a891dd2a20c8da7cd26bcd2ec9fecdc3bc2a645721a58d68694d3"
