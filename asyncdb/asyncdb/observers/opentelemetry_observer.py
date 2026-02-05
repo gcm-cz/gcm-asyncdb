@@ -12,7 +12,7 @@ from asyncdb.exceptions import Error
 class OpenTelemetryTransactionObserver(
     GenericTransactionObserver[tuple[AbstractContextManager[Span], Span], tuple[AbstractContextManager[Span], Span]]
 ):
-    """OpenTelemetry observer for aiomysql transactions and queries."""
+    """OpenTelemetry observer for transactions and queries."""
 
     def __init__(self, tracer: Tracer) -> None:
         """

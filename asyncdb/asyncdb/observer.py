@@ -29,19 +29,19 @@ class GenericQueryObserver(Generic[QueryContextT, ConnectionTypeT], ABC):
     Example:
 
     >>> import asyncio
-    >>> from asyncdb.aiomysql import QueryObserver, AioMySQLConnection
+    >>> from asyncdb.asyncdb import ConnectionProtocol, QueryObserver
     >>>
     >>> class MyObserver(QueryObserver):
-    >>>     def observe_query_before(self, conn: AioMySQLConnection, query: str, **kwargs):
+    >>>     def observe_query_before(self, conn: ConnectionProtocol, query: str, **kwargs):
     >>>         print(f"Query: {query}")
     >>>
-    >>>     def observe_query_after(self, conn: AioMySQLConnection, query: str, context: Any, **kwargs):
+    >>>     def observe_query_after(self, conn: ConnectionProtocol, query: str, context: Any, **kwargs):
     >>>         print(f"Query executed")
     >>>
-    >>>     def observe_query_error(self, conn: AioMySQLConnection, query: str, error: BaseException, context: Any, **kwargs):
+    >>>     def observe_query_error(self, conn: ConnectionProtocol, query: str, error: BaseException, context: Any, **kwargs):
     >>>         print(f"Query failed with error {error}")
     >>>
-    >>> connection: AioMySQLConnection = ...
+    >>> connection: ConnectionProtocol = ...
     >>>
     >>> # Attach observer instance to the connection.
     >>> connection.attach(MyObserver())
@@ -131,7 +131,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
     Example:
 
     >>> import asyncio
-    >>> from asyncdb.aiomysql import Transaction, Result, TransactionObserver, AioMySQLConnection
+    >>> from asyncdb.asyncdb import Transaction, Result, TransactionObserver, ConnectionProtocol
 
     >>> class MyObserver(TransactionObserver):
     >>>     def observe_transaction_start(self, transaction: Transaction, **kwargs):
@@ -156,7 +156,7 @@ class GenericTransactionObserver(ABC, Generic[QueryContextT, TransactionContextT
     >>>         print("Transaction is going to be retried.")
     >>>
     >>>
-    >>> connection: AioMySQLConnection = ...
+    >>> connection: ConnectionProtocol = ...
     >>> trx = Transaction(connection)
     >>> trx.attach(MyObserver())
     >>>

@@ -21,10 +21,10 @@ class ObjectFetcher(Generic[ResObjT]):
 
     >>> import asyncio
     >>> from asyncdb import ObjectFetcher
-    >>> from asyncdb.aiomysql import Transaction, AioMySQLConnection
+    >>> from asyncdb.asyncdb import Transaction, ConnectionProtocol
     >>> from dataclasses import dataclass
     >>>
-    >>> connection: AioMySQLConnection = ...
+    >>> connection: ConnectionProtocol = ...
     >>>
     >>> @dataclass
     >>> class Product:

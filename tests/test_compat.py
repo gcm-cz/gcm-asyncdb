@@ -16,12 +16,22 @@ def test_import_observers_warns() -> None:
         assert new_observer.QueryObserver is QueryObserver
 
     with pytest.warns(DeprecationWarning):
+        from asyncdb.aiomysql import QueryObserver
+
+        assert new_observer.QueryObserver is QueryObserver
+
+    with pytest.warns(DeprecationWarning):
         from asyncdb.aiomysql.observer import GenericTransactionObserver
 
         assert new_observer.GenericTransactionObserver is GenericTransactionObserver
 
     with pytest.warns(DeprecationWarning):
         from asyncdb.aiomysql.observer import TransactionObserver
+
+        assert new_observer.TransactionObserver is TransactionObserver
+
+    with pytest.warns(DeprecationWarning):
+        from asyncdb.aiomysql import TransactionObserver
 
         assert new_observer.TransactionObserver is TransactionObserver
 

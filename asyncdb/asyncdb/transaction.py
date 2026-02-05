@@ -119,7 +119,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         Example:
 
         >>> import asyncio
-        >>> from asyncdb.aiomysql import AioMySQLConnection, Transaction, TransactionObserver
+        >>> from asyncdb.asyncdb import ConnectionProtocol, Transaction, TransactionObserver
         >>>
         >>> class MyObserver(TransactionObserver):
         >>>     def observe_transaction_start(self, transaction: Transaction, **kwargs):
@@ -141,7 +141,7 @@ class Transaction(ABC, Generic[ConnectionTypeT]):
         >>>         print(f"Query executed with result {result}")
         >>>
         >>>
-        >>> connection: AioMySQLConnection = ...
+        >>> connection: ConnectionProtocol = ...
         >>> async def main():
         >>>     trx = Transaction(connection)
         >>>     trx.attach(MyObserver())

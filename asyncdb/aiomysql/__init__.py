@@ -24,6 +24,7 @@ async with db.transaction() as trx:
 
 """
 
+from asyncdb.aiomysql import observer as _observer
 from asyncdb.aiomysql.config import MySQLConfig, MySQLConfigProtocol
 from asyncdb.aiomysql.connection import AioMySQLConnection
 from asyncdb.aiomysql.factory import TransactionFactory
@@ -37,10 +38,19 @@ __all__ = [
     "MySQLConfig",
     "MySQLConfigProtocol",
     "MySQLConnectionPool",
+    "QueryObserver",  # pylint: disable=undefined-all-variable
     "Result",
     "SharedRollbackMode",
     "SharedTransactionFactory",
     "Transaction",
     "TransactionFactory",
     "TransactionIsolationLevel",
+    "TransactionObserver",  # pylint: disable=undefined-all-variable
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name in {"QueryObserver", "TransactionObserver"}:
+        return getattr(_observer, name)
+
+    raise AttributeError(f"module {__name__} has no attribute {name}")

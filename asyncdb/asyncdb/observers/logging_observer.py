@@ -70,7 +70,7 @@ class TransactionLoggingObserver(
     Observer that logs transaction-related events.
     """
 
-    trx_id: ClassVar[ContextVar[int | None]] = ContextVar("asyncdb.aiomysql.trx_id", default=None)
+    trx_id: ClassVar[ContextVar[int | None]] = ContextVar("asyncdb.asyncdb.TransactionLoggingObserver.trx_id", default=None)
 
     def __init__(self, logger: logging.Logger) -> None:
         """
