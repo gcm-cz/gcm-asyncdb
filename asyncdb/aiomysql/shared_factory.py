@@ -58,7 +58,7 @@ class SharedTransactionFactory(
     >>>     return out
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=useless-parent-delegation
         self,
         config: MySQLConfigProtocol,
         isolation_level: TransactionIsolationLevel | None = None,
