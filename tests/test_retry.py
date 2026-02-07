@@ -1,9 +1,8 @@
-
 import pytest
 from pymysql.constants import ER
 from tenacity import stop_after_attempt
 
-from asyncdb.aiomysql import TransactionFactory
+from asyncdb.aiomysql import SharedTransactionFactory, TransactionFactory
 from asyncdb.exceptions import Deadlock, ImplicitRollback
 
 from .conftest import CatchQueryObserver
@@ -186,3 +185,33 @@ async def test_retry_context_succeeds(
     for row in caplog.records:
         if row.name == "db.mysql.test":
             assert row.filename == "test_retry.py"
+
+
+@pytest.mark.asyncio
+async def test_retry_other_exception_not_retried(factory: TransactionFactory, catch_queries: CatchQueryObserver) -> None:
+    catch_queries.clear()
+
+    with pytest.raises(ValueError):
+        with pytest.warns(ImplicitRollback):
+            async for attempt in factory.retry():
+                async with attempt as trx:
+                    await trx.query("SELECT 1")
+                    raise ValueError("test")
+
+    assert catch_queries.QUERIES_EXECUTED == ["BEGIN", "SELECT 1", "ROLLBACK"]
+
+
+@pytest.mark.asyncio
+async def test_retry_other_exception_not_retried_shared_factory(
+    shared_factory: SharedTransactionFactory, catch_queries: CatchQueryObserver
+) -> None:
+    catch_queries.clear()
+
+    with pytest.raises(ValueError):
+        with pytest.warns(ImplicitRollback):
+            async for attempt in shared_factory.retry():
+                async with attempt as trx:
+                    await trx.query("SELECT 1")
+                    raise ValueError("test")
+
+    assert catch_queries.QUERIES_EXECUTED == ["BEGIN", "SELECT 1", "ROLLBACK"]

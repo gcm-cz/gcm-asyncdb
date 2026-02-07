@@ -4,7 +4,14 @@ from typing import Any
 
 import pytest
 
-from asyncdb.aiomysql import AioMySQLConnection, MySQLConfig, MySQLConnectionPool, Transaction, TransactionFactory
+from asyncdb.aiomysql import (
+    AioMySQLConnection,
+    MySQLConfig,
+    MySQLConnectionPool,
+    SharedTransactionFactory,
+    Transaction,
+    TransactionFactory,
+)
 from asyncdb.asyncdb import QueryObserver
 
 
@@ -55,6 +62,26 @@ async def factory(catch_queries: CatchQueryObserver, config: MySQLConfig) -> Asy
             await pool.close()
 
         TransactionFactory._pool_cache.clear()
+        
+
+@pytest.fixture
+async def shared_factory(catch_queries: CatchQueryObserver, config: MySQLConfig) -> AsyncGenerator[SharedTransactionFactory]:
+    factory = SharedTransactionFactory(
+        config=config,
+        connection_observers=[catch_queries]
+    )
+    factory.ensure_pool(keeper_task=False)
+
+    await factory.pool._keeper_task_iteration()
+
+    try:
+        yield factory
+
+    finally:
+        for pool in SharedTransactionFactory._pool_cache.values():
+            await pool.close()
+
+        SharedTransactionFactory._pool_cache.clear()
 
 
 @pytest.fixture

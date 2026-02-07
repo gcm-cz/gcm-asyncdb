@@ -8,7 +8,7 @@ from tenacity.stop import StopBaseT
 from tenacity.wait import WaitBaseT
 from typing_extensions import override
 
-from asyncdb.aiomysql.config import MySQLConfigProtocol
+from asyncdb.aiomysql.config import DEFAULT_RETRY, DEFAULT_RETRY_STOP, DEFAULT_RETRY_WAIT, MySQLConfigProtocol
 from asyncdb.aiomysql.connection import AioMySQLConnection
 from asyncdb.aiomysql.factory import AioMySQLConnectionTypeT, BaseMySQLTransactionFactory
 from asyncdb.aiomysql.pool import MySQLConnectionPool
@@ -66,9 +66,9 @@ class SharedTransactionFactory(
         connection_observers: Collection[GenericQueryObserver[Any, Any]] | None = None,
         transaction_observers: (Collection[GenericTransactionObserver[Any, Any, Any, Any]] | None) = None,
         *,
-        retry_stop: StopBaseT | None = None,
-        retry_wait: WaitBaseT | None = None,
-        retry_retry: RetryBaseT | None = None,
+        retry_stop: StopBaseT = DEFAULT_RETRY_STOP,
+        retry_wait: WaitBaseT = DEFAULT_RETRY_WAIT,
+        retry_retry: RetryBaseT = DEFAULT_RETRY,
         propagate_rollback: bool = True,
         shared_rollback_mode: SharedRollbackMode = SharedRollbackMode.WARN,
     ) -> None:
