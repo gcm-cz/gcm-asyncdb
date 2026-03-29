@@ -62,14 +62,11 @@ async def factory(catch_queries: CatchQueryObserver, config: MySQLConfig) -> Asy
             await pool.close()
 
         TransactionFactory._pool_cache.clear()
-        
+
 
 @pytest.fixture
 async def shared_factory(catch_queries: CatchQueryObserver, config: MySQLConfig) -> AsyncGenerator[SharedTransactionFactory]:
-    factory = SharedTransactionFactory(
-        config=config,
-        connection_observers=[catch_queries]
-    )
+    factory = SharedTransactionFactory(config=config, connection_observers=[catch_queries])
     factory.ensure_pool(keeper_task=False)
 
     await factory.pool._keeper_task_iteration()

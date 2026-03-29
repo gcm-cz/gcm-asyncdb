@@ -28,9 +28,25 @@ class LoggingObserver(Generic[ConnectionTypeT], GenericQueryObserver[float, Conn
         self, conn: ConnectionTypeT, query: str, *, logger: logging.Logger | None = None, stacklevel: int = 0, **kwargs: Any
     ) -> float:
         """Log start of query execution."""
+        # trace = traceback.extract_stack()
+        # frames_file_lines = [f"- [{idx}] {f.filename}:{f.lineno}" for idx, f in enumerate(trace)]
+
         trx_id = TransactionLoggingObserver.trx_id.get()
         if trx_id is not None:
-            (logger or self.logger).debug("Executing %s [trx %d]", query, trx_id, stacklevel=_SL.get() + stacklevel)
+            # (logger or self.logger).debug(
+            #    "Executing %s [trx %d] \n%s\nSL=%s",
+            #    query,
+            #    trx_id,
+            #    "\n".join(frames_file_lines),
+            #    _SL.get() + stacklevel,
+            #    stacklevel=_SL.get() + stacklevel,
+            # )
+            (logger or self.logger).debug(
+                "Executing %s [trx %d]",
+                query,
+                trx_id,
+                stacklevel=_SL.get() + stacklevel,
+            )
         else:
             (logger or self.logger).debug("Executing %s", query, stacklevel=_SL.get() + stacklevel)
         return time()

@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator, Collection
+from contextlib import _AsyncGeneratorContextManager
 from contextvars import ContextVar
 from typing import Any, Generic
 
@@ -166,3 +167,23 @@ class SharedTransactionFactory(
             async with self.transaction(shared=True) as trx:
                 with _SL(-1):
                     yield trx
+
+    async def retry(
+        self,
+        *,
+        timeout: float | None = None,  # noqa: ASYNC109
+        retry_stop: StopBaseT | None = None,
+        retry_wait: WaitBaseT | None = None,
+        retry_retry: RetryBaseT | None = None,
+        stacklevel: int = 0,
+        **kwargs: Any,
+    ) -> AsyncGenerator[_AsyncGeneratorContextManager[TransactionTypeT], None]:
+        with _SL():
+            async for attempt in super().retry(
+                timeout=timeout,
+                retry_stop=retry_stop,
+                retry_wait=retry_wait,
+                retry_retry=retry_retry,
+                stacklevel=stacklevel - 1,
+            ):
+                yield attempt

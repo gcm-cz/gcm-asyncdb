@@ -251,3 +251,70 @@ async def test_propagate_rollback_raise(shared_factory: SharedTransactionFactory
     for record in caplog.records:
         if record.name == "db.mysql.test":
             assert record.filename == "test_shared_factory.py"
+
+
+@pytest.mark.asyncio
+async def test_exception_in_shared_transaction(
+    shared_factory: SharedTransactionFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Test verifies that if an exception is raised inside a shared transaction context, the transaction is properly rolled back
+    and the exception is propagated.
+
+    Also verifies that logging is correctly stack-leveled into user's code.
+    """
+
+    async with shared_factory.transaction() as transaction:
+        with pytest.raises(Exception, match="test exception"):
+            async with shared_factory.transaction(shared=True) as shared_transaction:
+                await shared_transaction.get_scalar("SELECT 1") == 1
+                raise Exception("test exception")
+
+        assert await shared_transaction.is_committed() is False
+        assert await transaction.is_committed() is False
+
+        assert await transaction.get_scalar("SELECT 2") == 2
+        await transaction.commit()
+
+    assert await shared_transaction.is_committed() is True
+
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
+    for record in caplog.records:
+        if record.name == "db.mysql.test":
+            assert record.filename == "test_shared_factory.py"
+
+
+@pytest.mark.asyncio
+async def test_retry_with_shared_transaction(shared_factory: SharedTransactionFactory, caplog: pytest.LogCaptureFixture) -> None:
+    """
+    Test verifies the retry mechanism does not catch generic exceptions. There should be no retry when an generic exception
+    is raised.
+
+    Also checked here is that the transaction context works properly when exception occurs.
+
+    And as always, that logging is correctly stack-leveled to user code.
+    """
+
+    attempt_count = 0
+
+    with pytest.raises(Exception, match="test retry"):
+        async for attempt in shared_factory.retry():
+            async with attempt as transaction:
+                attempt_count += 1
+                if attempt_count < 3:
+                    async with shared_factory.transaction(shared=True) as shared_transaction:
+                        assert await shared_transaction.get_scalar("SELECT 1") == 1
+
+                        # no retry on this exception
+                        raise Exception("test retry")
+
+                await transaction.commit()
+
+    assert attempt_count == 1
+    assert shared_transaction.is_committed()
+    assert transaction.is_committed()
+
+    assert any(record.name == "db.mysql.test" for record in caplog.records)
+    for record in caplog.records:
+        if record.name == "db.mysql.test":
+            assert record.filename == "test_shared_factory.py"

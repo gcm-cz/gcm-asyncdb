@@ -128,8 +128,11 @@ class SharedTransactionFactory(
         self, *, propagate_rollback: bool | None = None, isolation_level: TransactionIsolationLevel | None = None
     ) -> TransactionContext[Transaction]:
         existing_trx = self.transaction_context.get()
+        expected_isolation_level = isolation_level or self.isolation_level
 
-        if existing_trx and existing_trx.isolation_level != (isolation_level or self.isolation_level):
+        # When expected isolation level is requested, compare it with the isolation level of the existing transaction.
+        # By default, isolation level does not matter when requesting shared transactions.
+        if existing_trx and expected_isolation_level and existing_trx.isolation_level != expected_isolation_level:
             raise IsolationLevelMismatch(
                 "Cannot reuse existing transaction with different isolation level "
                 f"(existing: {existing_trx.isolation_level}, requested: {isolation_level or self.isolation_level})"

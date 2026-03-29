@@ -86,12 +86,12 @@ class SharedTransactionContext(Generic[TransactionTypeT], TransactionContext[Tra
     async def __aenter__(self) -> TransactionTypeT:
         with _SL():
             trx = await super().__aenter__()
-            self.token = self.transaction_context.set(trx)
-            return trx
+        self.token = self.transaction_context.set(trx)
+        return trx
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
     ) -> None:
+        self.transaction_context.reset(self.token)
         with _SL():
-            self.transaction_context.reset(self.token)
             await super().__aexit__(exc_type, exc_value, traceback)

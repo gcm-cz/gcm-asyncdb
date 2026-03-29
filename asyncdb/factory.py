@@ -43,7 +43,7 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         self._connection_observers = connection_observers or []
         self._transaction_observers = transaction_observers or []
 
-        self._retry_stop = retry_stop or stop_after_delay(10)
+        self._retry_stop = retry_stop or stop_after_delay(2)
         self._retry_wait = retry_wait or wait_exponential(multiplier=0.5, min=0.01, max=1)
         self._retry_retry = retry_retry or retry_if_exception_type(BaseException)
 
@@ -188,6 +188,7 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         retry_stop: StopBaseT | None = None,
         retry_wait: WaitBaseT | None = None,
         retry_retry: RetryBaseT | None = None,
+        stacklevel: int = 0,
         **kwargs: Any,
     ) -> AsyncGenerator[_AsyncGeneratorContextManager[TransactionTypeT], None]:
         """
@@ -225,27 +226,27 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
 
         @asynccontextmanager
         async def trx_context(trx: TransactionTypeT, attempt: AttemptManager) -> AsyncIterator[TransactionTypeT]:
-            with _SL(-1):
-                with attempt:
-                    yield trx
+            with attempt:
+                yield trx
 
-                if attempt.retry_state.outcome.failed:
-                    attempt.retry_state.kwargs["trx"] = trx
+            if attempt.retry_state.outcome.failed:
+                attempt.retry_state.kwargs["trx"] = trx
 
         async def _observe_retry(retry_state: RetryCallState) -> None:
-            await cast(TransactionTypeT, retry_state.kwargs["trx"])._observe_retry(attempt.retry_state)  # pylint: disable=protected-access
+            with _SL(2):
+                await cast(TransactionTypeT, retry_state.kwargs["trx"])._observe_retry(attempt.retry_state)  # pylint: disable=protected-access
 
         if not retry_retry:
             retry_retry = self._retry_retry
 
-        with _SL(2):
-            async for attempt in AsyncRetrying(
-                retry=retry_any(self._retry_retry, retry_retry) if retry_retry else self._retry_retry,  # type: ignore[arg-type]
-                wait=retry_wait or self._retry_wait,
-                stop=retry_stop or self._retry_stop,
-                before_sleep=_observe_retry,
-                reraise=True,
-            ):
+        async for attempt in AsyncRetrying(
+            retry=retry_any(self._retry_retry, retry_retry) if retry_retry else self._retry_retry,  # type: ignore[arg-type]
+            wait=retry_wait or self._retry_wait,
+            stop=retry_stop or self._retry_stop,
+            before_sleep=_observe_retry,
+            reraise=True,
+        ):
+            with _SL(2 + stacklevel):
                 async with self.transaction(timeout=timeout, **kwargs) as trx:
-                    with _SL(-1):
+                    with _SL(-2):
                         yield trx_context(trx, attempt)
