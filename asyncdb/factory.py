@@ -104,16 +104,7 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         :param keeper_task: When set to False, the pool's keeper task is not started. This is useful when you want to control
             the pool's lifecycle manually, for example in tests.
         """
-        if self._bound_pool is not None and not self._bound_pool.closed:
-            return
-
-        cache = self.__class__._pool_cache  # pylint: disable=protected-access
-        pool = cache.get(self._cache_key)
-        if pool is None or pool.closed:
-            pool = self._create_pool(keeper_task=keeper_task)
-            cache[self._cache_key] = pool
-
-        self._bound_pool = pool
+        self._bind_pool(replace_closed=True, keeper_task=keeper_task)
 
     @property
     def pool(self) -> DatabaseConnectionPoolT:
@@ -127,12 +118,24 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         Returns:
             Connection pool instance.
         """
+        return self._bind_pool(replace_closed=False)
+
+    def _bind_pool(self, *, replace_closed: bool, keeper_task: bool = True) -> DatabaseConnectionPoolT:
+        """
+        Return the pool this factory uses. When there is none yet (or it is closed and `replace_closed` is set), take the
+        pool from the shared cache, creating and caching a new one when the cache has none (or only a closed one and
+        `replace_closed` is set).
+
+        :param replace_closed: Whether a closed pool should be replaced by an open one.
+        :param keeper_task: Whether a newly created pool starts its keeper task.
+        :return: Connection pool instance.
+        """
         pool = self._bound_pool
-        if pool is None:
+        if pool is None or (replace_closed and pool.closed):
             cache = self.__class__._pool_cache  # pylint: disable=protected-access
             pool = cache.get(self._cache_key)
-            if pool is None:
-                pool = self._create_pool()
+            if pool is None or (replace_closed and pool.closed):
+                pool = self._create_pool(keeper_task=keeper_task)
                 cache[self._cache_key] = pool
 
             self._bound_pool = pool
