@@ -699,10 +699,15 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         discards too old connections and spins new ones when there is not enough connections in the pool.
         It is started automatically for each pool as it is created, and terminated when connection pool is closed.
         """
+        # The loop also checks the shutdown flag, because the cancellation from close() can get lost: on Python 3.11,
+        # asyncio.wait_for() (used when opening connections) swallows it when the awaited operation completes at the same
+        # moment (https://github.com/python/cpython/issues/86296). Without the check, the keeper would run forever and
+        # close() would wait for it forever.
         try:
-            while True:
+            while not self._shutdown:
                 await self._keeper_task_iteration()
-                await asyncio.sleep(1.0)
+                if not self._shutdown:
+                    await asyncio.sleep(1.0)
         except CancelledError:
             pass
 
