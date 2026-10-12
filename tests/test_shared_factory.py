@@ -267,7 +267,7 @@ async def test_exception_in_shared_transaction(
     async with shared_factory.transaction() as transaction:
         with pytest.raises(Exception, match="test exception"):
             async with shared_factory.transaction(shared=True) as shared_transaction:
-                await shared_transaction.get_scalar("SELECT 1") == 1
+                assert await shared_transaction.get_scalar("SELECT 1") == 1
                 raise Exception("test exception")
 
         assert await shared_transaction.is_committed() is False
@@ -311,8 +311,10 @@ async def test_retry_with_shared_transaction(shared_factory: SharedTransactionFa
                 await transaction.commit()
 
     assert attempt_count == 1
-    assert shared_transaction.is_committed()
-    assert transaction.is_committed()
+    # The exception escaped both contexts before any commit, so the transaction was rolled back on exit.
+    # is_committed() reports whether the transaction is still open, so it is True after the rollback too.
+    assert await shared_transaction.is_committed() is True
+    assert await transaction.is_committed() is True
 
     assert any(record.name == "db.mysql.test" for record in caplog.records)
     for record in caplog.records:
