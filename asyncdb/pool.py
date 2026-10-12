@@ -725,6 +725,14 @@ class ConnectionPool(Generic[ConnectionTypeT]):  # pylint: disable=too-many-inst
         """Number of connections currently in use."""
         return self._connections_in_use
 
+    @property
+    def closed(self) -> bool:
+        """
+        True once `close()` has been called. A closed pool keeps working, but discards every connection on return, so
+        each transaction opens a new connection. It should not be handed out for further use.
+        """
+        return self._shutdown
+
     async def close(self) -> None:
         """
         Close the pool. Stop the keeper task and do cleanup.
@@ -746,13 +754,14 @@ class DatabaseConnectionPool(Generic[ConnectionTypeT, TransactionTypeT], Connect
     def create(cls, *args: Any, **kwargs: Any) -> DatabaseConnectionPool[ConnectionTypeT, TransactionTypeT]:
         """
         Create new connection pool or return existing one from cache. The caching is done on the basis of arguments.
+        A cached pool that has been closed is replaced by a new one.
         :param args: Arguments passed to the connection pool constructor.
         :param kwargs: Keyword arguments passed to the connection pool constructor.
         :return: Created connection pool.
         """
         key = (str(args), str(kwargs))
 
-        if key not in cls._pool_cache:
+        if key not in cls._pool_cache or cls._pool_cache[key].closed:
             cls._pool_cache[key] = cls(*args, **kwargs)
 
         return cls._pool_cache[key]

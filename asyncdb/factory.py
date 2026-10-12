@@ -47,6 +47,9 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         self._retry_wait = retry_wait or wait_exponential(multiplier=0.5, min=0.01, max=1)
         self._retry_retry = retry_retry or retry_if_exception_type(BaseException)
 
+        self._bound_pool: DatabaseConnectionPoolT | None = None
+        """Pool this factory uses, taken from (or put into) the shared pool cache on first use."""
+
         super().__init__(**kwargs)
 
     @property
@@ -93,22 +96,51 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         Ensure the pool exists and connections are being created by keeper task. The pool is created when first used, this
         forces the creation of pool beforehand, to be ready when first connection is requested.
 
+        Pools are shared by all factories with the same configuration. When the pool this factory uses has been closed
+        (for example on shutdown of an application instance, when another one keeps running or starts later in the same
+        process), it is replaced by an open pool from the cache, or by a new one. This also happens each time a transaction
+        is requested.
+
         :param keeper_task: When set to False, the pool's keeper task is not started. This is useful when you want to control
             the pool's lifecycle manually, for example in tests.
         """
-        if self._cache_key not in self.__class__._pool_cache:  # pylint: disable=protected-access
-            self.__class__._pool_cache[self._cache_key] = self._create_pool(keeper_task=keeper_task)  # pylint: disable=protected-access
+        self._bind_pool(replace_closed=True, keeper_task=keeper_task)
 
     @property
     def pool(self) -> DatabaseConnectionPoolT:
         """
-        Get the connection pool, ensuring it is initialized.
+        Get the connection pool this factory uses, creating it when there is none yet.
+
+        A closed pool is returned as it is, not replaced: `factory.pool.close()` must close this factory's own pool, never a
+        pool that another factory created in its place, and never create a new pool just to close it. The closed pool is
+        replaced when this factory is used again (`ensure_pool()` or requesting a transaction).
 
         Returns:
             Connection pool instance.
         """
-        self.ensure_pool()
-        return self._pool_cache[self._cache_key]
+        return self._bind_pool(replace_closed=False)
+
+    def _bind_pool(self, *, replace_closed: bool, keeper_task: bool = True) -> DatabaseConnectionPoolT:
+        """
+        Return the pool this factory uses. When there is none yet (or it is closed and `replace_closed` is set), take the
+        pool from the shared cache, creating and caching a new one when the cache has none (or only a closed one and
+        `replace_closed` is set).
+
+        :param replace_closed: Whether a closed pool should be replaced by an open one.
+        :param keeper_task: Whether a newly created pool starts its keeper task.
+        :return: Connection pool instance.
+        """
+        pool = self._bound_pool
+        if pool is None or (replace_closed and pool.closed):
+            cache = self.__class__._pool_cache  # pylint: disable=protected-access
+            pool = cache.get(self._cache_key)
+            if pool is None or (replace_closed and pool.closed):
+                pool = self._create_pool(keeper_task=keeper_task)
+                cache[self._cache_key] = pool
+
+            self._bound_pool = pool
+
+        return pool
 
     async def __call__(self) -> AsyncGenerator[TransactionTypeT]:
         """
