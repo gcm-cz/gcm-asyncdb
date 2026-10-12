@@ -118,6 +118,9 @@ async def test_query_observer_from_factory(config: MySQLConfig) -> None:
         observer = QueryObserverForTest()
 
         factory = TransactionFactory(config=config, connection_observers=[observer])
+        # The observer is attached to every pool connection. A keeper task would open and health-check (SELECT 1) spare
+        # connections in the background, flipping the observer's flags in the middle of the test.
+        factory.ensure_pool(keeper_task=False)
 
         async with factory.transaction() as trx:
             res = await trx.query("SELECT 1")
