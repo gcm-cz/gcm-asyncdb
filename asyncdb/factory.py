@@ -93,10 +93,14 @@ class TransactionFactory(Generic[DatabaseConnectionPoolT, ConnectionTypeT, Trans
         Ensure the pool exists and connections are being created by keeper task. The pool is created when first used, this
         forces the creation of pool beforehand, to be ready when first connection is requested.
 
+        Pools are shared by all factories with the same configuration. When the shared pool has been closed (for example
+        by the shutdown of another application instance in the same process), a new pool is created in its place.
+
         :param keeper_task: When set to False, the pool's keeper task is not started. This is useful when you want to control
             the pool's lifecycle manually, for example in tests.
         """
-        if self._cache_key not in self.__class__._pool_cache:  # pylint: disable=protected-access
+        cached = self.__class__._pool_cache.get(self._cache_key)  # pylint: disable=protected-access
+        if cached is None or cached.closed:
             self.__class__._pool_cache[self._cache_key] = self._create_pool(keeper_task=keeper_task)  # pylint: disable=protected-access
 
     @property
