@@ -102,8 +102,10 @@ automatically replaced.
 Connection pool is created automatically when the first transaction is created. You can also create the pool manually
 using `asyncdb.aiomysql.TransactionFactory.ensure_pool()` method.
 
-All factories with the same configuration share one pool. When that pool is closed (`pool.close()`, typically on
-application shutdown), the next factory that needs it creates a fresh pool instead of reusing the closed one.
+All factories with the same configuration share one pool. When that pool is closed (`factory.pool.close()`, typically
+on application shutdown), the next transaction requested from any factory gets a fresh pool instead of the closed one.
+`factory.pool` itself returns the pool the factory has been using, even when closed, so `factory.pool.close()` never
+closes a replacement pool that another factory is using.
 
 The connection pool can be configured using `asyncdb.aiomysql.MySQLConfig` object:
 
