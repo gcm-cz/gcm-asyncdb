@@ -308,3 +308,40 @@ async def test_pool_transaction_error() -> None:
 
     assert pool.current_pool_size == 0
     assert pool.current_pool_free == 0
+
+
+@pytest.mark.asyncio
+async def test_close_finishes_when_keeper_swallows_cancellation(pool: MySQLConnectionPool) -> None:
+    """
+    On Python 3.11, `asyncio.wait_for()` swallows the cancellation of the awaiting task when the awaited operation completes
+    at the same moment (https://github.com/python/cpython/issues/86296). The keeper task creates connections through
+    `wait_for()`, so `close()` cancelling it while a connection is being opened could leave the keeper running forever,
+    and `close()` waiting for it forever.
+    """
+    swallowed = asyncio.Event()
+
+    async def iteration_swallowing_first_cancellation() -> None:
+        if swallowed.is_set():
+            await asyncio.sleep(10)
+            return
+
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            swallowed.set()
+
+    pool._keeper_task_iteration = iteration_swallowing_first_cancellation  # type: ignore[method-assign]
+    pool._start_keeper_task()
+    await asyncio.sleep(0)
+
+    close = asyncio.create_task(pool.close())
+    try:
+        done, _ = await asyncio.wait({close}, timeout=3)
+
+        assert swallowed.is_set()
+        assert close in done, "close() is stuck waiting for the keeper task"
+    finally:
+        # Unblock the keeper when the assertion failed, the second cancellation is not swallowed.
+        assert pool._keeper_task_done is not None
+        pool._keeper_task_done.cancel()
+        await close
