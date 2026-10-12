@@ -95,6 +95,9 @@ class BaseMySQLTransactionFactory(
         isolation_level: TransactionIsolationLevel | None = None,
         **kwargs: Any,
     ) -> Transaction:
+        # Replaces the pool when it has been closed in the meantime.
+        self.ensure_pool()
+
         return await asyncio.wait_for(
             self.pool.get_transaction(
                 isolation_level or self.isolation_level,
