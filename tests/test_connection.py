@@ -556,7 +556,7 @@ async def test_dbapi_2_executemany(connection: AioMySQLConnection) -> None:
             await trx.execute("SELECT * FROM test")
 
         with pytest.warns(DeprecationWarning):
-            await trx.fetchall() == [{"a": 1}, {"a": 2}, {"a": 3}]
+            assert await trx.fetchall() == [{"a": 1}, {"a": 2}, {"a": 3}]
 
         await trx.commit()
 
