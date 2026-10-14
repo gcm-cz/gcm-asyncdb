@@ -1,8 +1,11 @@
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+
 import pytest
 from pymysql.constants import ER
 from tenacity import stop_after_attempt
 
-from asyncdb.aiomysql import SharedTransactionFactory, TransactionFactory
+from asyncdb.aiomysql import SharedTransactionFactory, Transaction, TransactionFactory, TransactionIsolationLevel
 from asyncdb.exceptions import Deadlock, ImplicitRollback
 
 from .conftest import CatchQueryObserver
@@ -215,3 +218,80 @@ async def test_retry_other_exception_not_retried_shared_factory(
                     raise ValueError("test")
 
     assert catch_queries.QUERIES_EXECUTED == ["BEGIN", "SELECT 1", "ROLLBACK"]
+
+
+@asynccontextmanager
+async def _isolation_probe(
+    db: TransactionFactory | SharedTransactionFactory,
+) -> AsyncIterator[Callable[[Transaction], Awaitable[bool]]]:
+    """
+    Yields a probe telling whether `trx` sees a row committed by another connection after `trx` already read the table. That
+    holds under READ COMMITTED, but not under the server's default REPEATABLE READ, whose snapshot hides it. (`@@tx_isolation`
+    cannot tell, as `SET TRANSACTION ISOLATION LEVEL` leaves the session value untouched.)
+    """
+    async with db.transaction() as trx:
+        await trx.query("CREATE TABLE IF NOT EXISTS `retry_isolation` (`id` INT AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB")
+        await trx.commit()
+
+    async def sees_concurrent_commit(trx: Transaction) -> bool:
+        before = await trx.get_scalar("SELECT COUNT(*) FROM `retry_isolation`")
+
+        async with db.transaction() as other:
+            await other.query("INSERT INTO `retry_isolation` () VALUES ()")
+            await other.commit()
+
+        return await trx.get_scalar("SELECT COUNT(*) FROM `retry_isolation`") != before
+
+    try:
+        yield sees_concurrent_commit
+
+    finally:
+        async with db.transaction() as trx:
+            await trx.query("DROP TABLE `retry_isolation`")
+            await trx.commit()
+
+
+async def _retry_context_isolation(db: TransactionFactory | SharedTransactionFactory) -> list[bool]:
+    visible = []
+    async with _isolation_probe(db) as sees_concurrent_commit:
+        with pytest.warns(ImplicitRollback):
+            async for attempt in db.retry(isolation_level=TransactionIsolationLevel.READ_COMMITTED):
+                async with attempt as trx:
+                    visible.append(await sees_concurrent_commit(trx))
+                    if len(visible) < 3:
+                        raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
+
+                    await trx.commit()
+
+    return visible
+
+
+@pytest.mark.asyncio
+async def test_retry_context_applies_isolation_level(factory: TransactionFactory) -> None:
+    # Every attempt, including the ones after a rollback, runs at the requested isolation level.
+    assert await _retry_context_isolation(factory) == [True, True, True]
+
+
+@pytest.mark.asyncio
+async def test_retry_context_applies_isolation_level_shared_factory(shared_factory: SharedTransactionFactory) -> None:
+    # Every attempt, including the ones after a rollback, runs at the requested isolation level.
+    assert await _retry_context_isolation(shared_factory) == [True, True, True]
+
+
+@pytest.mark.asyncio
+async def test_retry_decorator_reapplies_isolation_level(shared_factory: SharedTransactionFactory) -> None:
+    visible = []
+    async with _isolation_probe(shared_factory) as sees_concurrent_commit:
+        async with shared_factory.transaction(isolation_level=TransactionIsolationLevel.READ_COMMITTED) as trx:
+
+            @trx.retry
+            async def retry_block() -> None:
+                visible.append(await sees_concurrent_commit(trx))
+                if len(visible) < 3:
+                    raise Deadlock("SELECT 'a'", "Simulated deadlock", ER.LOCK_DEADLOCK, trx.remote_app)
+
+            await retry_block()
+            await trx.commit()
+
+    # Each reset of the transaction between attempts starts it again at the requested isolation level.
+    assert visible == [True, True, True]

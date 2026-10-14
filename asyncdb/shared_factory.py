@@ -185,5 +185,6 @@ class SharedTransactionFactory(
                 retry_wait=retry_wait,
                 retry_retry=retry_retry,
                 stacklevel=stacklevel - 1,
+                **kwargs,
             ):
                 yield attempt
